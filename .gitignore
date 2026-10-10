@@ -1,5 +1,6 @@
 /bin/
 /.cache/
+/.worktrees/
 .env*
 *.test
 __pycache__/

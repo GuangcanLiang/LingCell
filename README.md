@@ -113,8 +113,10 @@ PTY 验收脚本需要 Python 3 标准库，启动临时 HOME 和本地模拟模
 - [AGENTS.md](AGENTS.md)：供维护工具自动发现的入口，指向同一份维护指南。
 - [Go 规范检查记录](docs/go-review.md)：检查依据、已修正问题和验证范围。
 - [开发日志](docs/development-log.md)：完成的开发工作、实际检查结果和后续事项。
+- [开发工作流](docs/workflow.md)：独立开发/测试 Agent、分支与 worktree、交接和回滚操作。
+- [参与开发](CONTRIBUTING.md)：维护规范入口和本地 hooks 启用方法。
 
-开发过程由本地 Git 提交管理；按明确问题或功能拆分提交，提交前检查差异并运行对应验证。当前模块名 `lingcell` 用于本地开发；确定远程仓库并需要远程 `go install` 时，再调整为仓库模块路径。
+开发在短期任务分支及独立 worktree 进行；每个有意义的变动都保存 Git 提交。正式验收必须派生干净上下文测试 subagent，在候选 SHA 的独立工作树验证；通过后才整合到稳定 `main`，保留任务合并记录。开始维护请先读 AGENT.md 并启用仓库 hooks。当前模块名 `lingcell` 用于本地开发；确定远程仓库并需要远程 `go install` 时，再调整为仓库模块路径。
 
 MVP 仅支持 Linux 交互 CLI，不包含 GUI、多 Agent、MCP、后台自主任务或跨会话记忆。个人 Bash 编辑插件、极端提示符钩子以及主动修改 LingCell 内部钩子的配置不在兼容承诺内。
 

@@ -2,6 +2,26 @@
 
 记录已完成的工作与实际验证，按日期及主题倒序排列。日期使用 Asia/Shanghai 时区；架构与日常约定见 [AGENT.md](../AGENT.md)。
 
+## 2026-10-10: 开发/测试 Agent 分离与 Git 工作树流程
+
+### 目标与改动
+
+根据用户要求，建立后续 Agent 必须执行的独立测试、交接、提交及分支/worktree 规范。
+
+- 保留原有历史，将默认分支 master 重命名为 main；本任务在 docs/agent-workflow 分支和独立 .worktrees/agent-workflow 开发。
+- AGENT.md 作为规范源，要求正式验收派生无开发对话继承的测试 Agent，固定候选提交、独立 detached 工作树、最小交接、复现反馈和改动后重验；明确这是维护分工，产品仍保持单 Agent MVP。
+- 规定有意义的代码、测试、配置和文档变动必须提交，使用短期任务分支和 no-ff 整合，禁止主分支直接开发；补充 WIP、基线变化、回滚、工作树清理及远程保护边界。
+- 增加 docs/workflow.md 操作手册、双向交接模板、CONTRIBUTING.md 入口及本地提交 hooks；README、AGENTS.md 链接到强制流程，忽略 .worktrees。
+- 实际开发交接见 [agent-workflow 报告](handoffs/agent-workflow.md)，基线为先前文档提交 948a7a0；候选在提交后交给独立测试 Agent。
+
+### 验证状态
+
+本条候选提交时独立验收尚未执行；结果会在独立报告返回后追加。当前只改变维护文档、Git hooks 与忽略规则，没有修改 Go 产品代码。
+
+### 未验证与后续事项
+
+远程仓库、服务器分支保护、PR 状态检查尚未配置；本次只落地本地开发流程。本仓库已设置 core.hooksPath=.githooks，主工作树更新 hooks 文件后生效；实际整合与工作树清理在验收通过后执行，并记录结果。
+
 ## 2026-10-10: Go 规范检查与维护流程
 
 ### 目标与改动
