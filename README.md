@@ -97,14 +97,24 @@ Go 在顶层编辑输入；命令通过独立管道按 NUL 边界提交，再由
 ## 验证
 
 ```bash
+make fmt
 make check
-make build
-python3 scripts/verify_terminal.py --binary bin/lingcell
+make lint
+make terminal
 ```
 
-Go 测试使用模拟模型与本地 HTTP 服务，覆盖 Bash 状态、个人钩子、长命令、多行及 heredoc、输出截断、取消和作业控制、路由、文件越界及 `.gitignore`、读取预算、工具反馈、拒绝、参数错误、超时与循环上限。`make check` 运行 `go vet` 和竞态测试。
+Go 测试使用模拟模型与本地 HTTP 服务，覆盖 Bash 状态、个人钩子、长命令、多行及 heredoc、输出截断、取消和作业控制、路由、文件越界及 `.gitignore`、读取预算、工具反馈、拒绝、参数错误、超时与循环上限。`make check` 检查 `gofmt`、`go mod tidy -diff`，再运行 `go vet` 和竞态测试。`make lint` 运行 Staticcheck，安装方法见维护指南；`make terminal` 会先构建 CLI，再执行 PTY 验收。
 
 PTY 验收脚本需要 Python 3 标准库，启动临时 HOME 和本地模拟模型，通过真实 CLI 验证输入编辑、续行、Ctrl-C/Z、`bg/fg`、缩放、Agent 确认/拒绝、错误诊断、分类、模型取消、历史与退出终端恢复。系统安装了 `vim` / `top` 时还会实际启动它们。脚本不使用真实供应商或远程 SSH 主机；成功的远程 SSH 会话及真实供应商工具调用需选定服务后联调。
+
+## 开发与维护
+
+- [AGENT.md](AGENT.md)：架构约束、代码职责、Go 开发约定、验证命令和 Git 工作流程。
+- [AGENTS.md](AGENTS.md)：供维护工具自动发现的入口，指向同一份维护指南。
+- [Go 规范检查记录](docs/go-review.md)：检查依据、已修正问题和验证范围。
+- [开发日志](docs/development-log.md)：完成的开发工作、实际检查结果和后续事项。
+
+开发过程由本地 Git 提交管理；按明确问题或功能拆分提交，提交前检查差异并运行对应验证。当前模块名 `lingcell` 用于本地开发；确定远程仓库并需要远程 `go install` 时，再调整为仓库模块路径。
 
 MVP 仅支持 Linux 交互 CLI，不包含 GUI、多 Agent、MCP、后台自主任务或跨会话记忆。个人 Bash 编辑插件、极端提示符钩子以及主动修改 LingCell 内部钩子的配置不在兼容承诺内。
 
