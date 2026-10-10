@@ -26,6 +26,7 @@
 4. 所有 Markdown 相对链接有效，差异空白检查通过，hooks 可执行且 POSIX shell 语法通过。
 5. 隔离临时 Git 仓库测试 hooks：main/master 与 detached/不规范分支直接提交被拒；合法任务分支提交成功；合规和带 scope/! 的标题通过，非法标题拒绝；规范标题的 no-ff merge 到 main 成功。
 6. 检查当前实际分支/worktree 与候选身份，测试结束源树不变，无真实服务或凭据访问。
+7. 复测回滚修正：普通/合并 revert 使用 --no-commit，暂存审查能看到实际反向改动，以 revert: 标题正常提交，文档准确说明 hooks 对自动提交的覆盖边界。
 
 ## 建议检查和边界
 
@@ -36,3 +37,13 @@
 ## 测试报告
 
 独立报告将在验收后追加，包含实际候选 SHA、命令/结果及未运行项；追加报告不修改已验收的规范或 hooks。
+
+### 第一轮反馈：FAIL
+
+- 测试 Agent：workflow_acceptance，使用无开发对话继承的上下文。
+- 基线：`948a7a0153eb4246fed64783b7180849167584d3`。
+- 候选：`5e1757af555bf6c5e49bd5b0cb2cf9accc039644`，detached 工作树保持不变。
+- 已返回结果：hooks 正反检查、文档链接和身份检查通过，回滚说明存在两个需修正的问题。
+- 复现 1：`git revert --no-commit` 的改动在暂存区，旧示例的 `git diff` 输出为空；`git diff --cached` 才能审查实际反向差异。
+- 复现 2：Git 2.43.0 的直接 `git revert -m 1` 自动生成 `Revert "merge: ..."` 提交，并不经过相同的 commit-msg 检查，违反项目标题规则。
+- 修订：统一使用 `--no-commit`、检查暂存差异、用 `revert: ...` 正常提交，并明确 hooks 覆盖边界。修订后的候选需由新的干净上下文测试 Agent 完整复测。

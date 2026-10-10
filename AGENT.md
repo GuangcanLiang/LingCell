@@ -96,10 +96,10 @@ Staticcheck 当前验证版本为 2026.2.1（模块版本 `v0.8.1`），需要�
 - 暂存前审查状态和差异，明确选择相关文件，审查暂存内容并检查空白；不得提交二进制、缓存、历史、凭据、临时 worktree，也不得提交或清理别人的修改。
 - 任务独立验收通过后才整合。当前本地仓库由协调 Agent 在既有用户授权范围内执行 `git merge --no-ff`，保留任务边界与细分提交。今后连接远程平台后走 PR + 独立审查/状态检查；本地 hooks 不是远程保护规则。推送、发布及扩大权限仍以用户授权为准。
 - 合入前确认主工作树干净、`main` 仍等于交接的基线，候选提交仍等于已验收版本（仅允许上述证据文档追加）。如果 `main` 已变，先在任务分支整合最新 `main`，解决冲突后重新独立验收；禁止把未验证的冲突解决直接带入主分支。
-- 回滚也用 `revert/<topic>` 分支与独立验收，优先新增 `git revert` 反向提交，保留历史。撤销合并使用 `git revert -m 1 <merge-sha>`，先核实第一父提交和影响；不要用 reset/force push 抹除共享历史。
+- 回滚也用 `revert/<topic>` 分支与独立验收，优先用 `git revert --no-commit` 生成反向改动，审查暂存差异后以 `revert: ...` 提交，保留历史。撤销合并使用 `git revert --no-commit -m 1 <merge-sha>`，先核实第一父提交和影响；不要用 reset/force push 抹除共享历史。
 - 合并后检查图形历史、状态及两端树内容一致；确认没有未提交/未保留文件，再用 `git worktree remove` 清理测试/开发工作树，用 `git branch -d` 清理已合入分支。不得用 `--force` 或直接 rm 隐藏工作树内容。
 - 每个任务更新 `docs/development-log.md`，记录需求、模块变化、基线/候选、真实检查与未验证项，并关联交接报告。不能在被提交的文件中写该次提交自身 SHA，使用候选/先前提交 SHA 和 Git 历史索引。
 
-仓库携带 `.githooks/pre-commit`（主分支/分支名拦截）和 `.githooks/commit-msg`（标题检查）。每次新 clone 后执行 `git config --local core.hooksPath .githooks` 并检查配置；不要绕过 hooks 或给所有仓库设置全局 hooksPath。hooks 只校验本地流程的部分条件，独立测试与合入条件由协调 Agent 检查。
+仓库携带 `.githooks/pre-commit`（正常提交时的主分支/分支名拦截）和 `.githooks/commit-msg`（标题检查）。每次新 clone 后执行 `git config --local core.hooksPath .githooks` 并检查配置；不要绕过 hooks 或给所有仓库设置全局 hooksPath。自动创建提交的 Git 操作不一定调用相同 hooks，回滚必须遵循上述 `--no-commit` 流程。hooks 只校验本地流程的部分条件，独立测试与合入条件由协调 Agent 检查。
 
 具体操作、交接和回滚步骤见 [开发工作流](docs/workflow.md)。后续 Agent 必须遵守本文件；`AGENTS.md`、`CONTRIBUTING.md` 仅作发现入口，避免复制多份不一致的规范。

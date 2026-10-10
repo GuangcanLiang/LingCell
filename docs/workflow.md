@@ -144,7 +144,8 @@ git worktree list
 
 ```bash
 git revert --no-commit <bad-commit-sha>
-git diff
+git diff --cached
+git diff --cached --check
 git commit -m "revert: undo example change"
 ```
 
@@ -153,5 +154,7 @@ git commit -m "revert: undo example change"
 ## 本地 hooks 的范围
 
 `.githooks/pre-commit` 拒绝 main/master、detached HEAD 和不符合任务前缀的直接提交。`.githooks/commit-msg` 检查提交首行标题，支持可选 scope 和破坏性标记 `!`。正常整合使用规范的 `merge: ...` 标题。
+
+这些 hooks 检查正常的 `git commit` 流程。Git 某些自动创建提交的操作（例如直接 `git revert`）不执行相同的 hooks，所以回滚必须使用上文的 `--no-commit`，审查后再通过正常提交流程生成 `revert: ...` 记录。
 
 hooks 未实现独立 PASS 自动判定或服务端分支保护；这些条件由协调 Agent 和今后的远程平台检查。不得用跳过 hooks 或重写共享历史来绕开规范。
