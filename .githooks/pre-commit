@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+
+if ! branch=$(git symbolic-ref --quiet --short HEAD); then
+    printf '%s\n' 'Commit blocked: use a named task branch; verification worktrees are read-only.' >&2
+    exit 1
+fi
+
+case "$branch" in
+    main|master)
+        printf '%s\n' 'Commit blocked: create a task branch/worktree; main accepts verified merges.' >&2
+        exit 1
+        ;;
+    feat/?*|fix/?*|refactor/?*|test/?*|docs/?*|chore/?*|revert/?*|hotfix/?*)
+        ;;
+    *)
+        printf '%s\n' 'Commit blocked: use feat/fix/refactor/test/docs/chore/revert/hotfix followed by /<topic>.' >&2
+        exit 1
+        ;;
+esac

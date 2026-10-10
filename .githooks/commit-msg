@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+
+subject=''
+IFS= read -r subject < "$1" || [ -n "$subject" ]
+if ! printf '%s\n' "$subject" | LC_ALL=C grep -Eq '^(feat|fix|refactor|test|docs|chore|build|ci|perf|style|revert|merge)(\([A-Za-z0-9._/-]+\))?!?: [^[:space:]].*$'; then
+    printf '%s\n' 'Commit blocked: use type(scope): description, for example fix(shell): preserve job state.' >&2
+    exit 1
+fi

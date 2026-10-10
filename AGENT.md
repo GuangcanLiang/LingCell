@@ -6,7 +6,7 @@
 
 LingCell 是 Linux 上的 Go 原生 AI Agent Shell：Go 编辑和路由输入，持久交互式 Bash 保留会话状态，PTY 承载交互程序，Agent 用工具调用提出逐条确认的操作。最低 Go 版本由 `go.mod` 决定，目前为 1.26；自动文件读取使用 Linux 5.6+ 的 `openat2`。
 
-现阶段保持单进程、小型有界循环，不擅自引入 GUI、多 Agent、MCP、后台自主任务、跨会话记忆或其他语言的 Agent 框架。
+现阶段保持单进程、小型有界循环，不擅自引入 GUI、多 Agent、MCP、后台自主任务、跨会话记忆或其他语言的 Agent 框架。这里的多 Agent 限制针对 LingCell 产品运行时；仓库开发和验收必须按下文分开使用开发 Agent 与测试 Agent。
 
 ## 代码地图
 
@@ -22,6 +22,8 @@ LingCell 是 Linux 上的 Go 原生 AI Agent Shell：Go 编辑和路由输入，
 | `internal/config` | 配置默认值、体积限制及合法性校验 |
 | `scripts/verify_terminal.py` | 真实 CLI 的本地 PTY 和模拟模型验收 |
 | `docs/development-log.md` | 已完成工作、实际验证结果及未验证事项 |
+| `docs/workflow.md`、`docs/templates` | 分支/worktree 操作步骤、开发交接和测试报告模板 |
+| `.githooks` | 本地主分支直接提交拦截与提交标题检查 |
 
 接口尽量定义在消费者所在包。`agent.ShellSession`、`agent.ProjectReader` 支撑模拟测试；执行 shell 语法由 Bash 负责，Go 解析器仅用于路由及输入完整性判断。
 
@@ -67,24 +69,37 @@ Staticcheck 当前验证版本为 2026.2.1（模块版本 `v0.8.1`），需要�
 
 文档改动检查链接、命令和 `git diff --check` 即可；无需仅因文档改动重复全套应用测试。代码改动运行对应测试和 `make check`；影响终端/Agent 交互时加 `make terminal`。本地测试需要可写的 Go 缓存，以及模拟服务的本地监听权限；受环境限制时记录真实原因，不把未执行的检查标记为通过。
 
+这些验收检查由独立测试 Agent 执行；开发 Agent 可做格式化、编译和局部自查，但自查不能代替独立验收。按改动范围选择检查，不能把未运行的命令记录为通过。
+
 真实供应商工具调用及成功的远程 SSH 会话未联调。未经用户选择和授权，不配置真实凭据或发起真实供应商请求。
 
-## Git 与开发记录
+## 开发 Agent 与测试 Agent：强制分工
 
-项目已建立本地 Git 提交基线。常规工作先查看状态，保护用户已有修改；按一个明确问题或功能形成可审查的小提交，代码、对应测试和说明保持一致。
+1. 开发 Agent 负责理解需求、制定可检查的验收条件、实现代码及回归测试、整理文档、提交任务分支，并修复测试反馈。测试 Agent 负责独立审查差异、执行验收和报告证据，不能让开发者自己的测试结论成为最终验收结论。
+2. 开始正式验收时必须另外派生测试 subagent，使用干净上下文。支持相应参数时用 `fork_turns="none"`，不要继承整个开发对话。只交接需求、验收条件、仓库路径、基线/候选提交的完整 SHA、改动范围、命令、约束和已知未验证项；由测试 Agent 自己读取仓库说明及差异。
+3. 开发与测试不得共享同一个可变工作目录。开发使用任务分支 worktree；测试使用候选完整 SHA 的 detached worktree，开始/结束检查 HEAD 与工作树状态。测试过程中开发者可以继续自己的工作，但不得修改测试目录或把新提交冒充为已验证版本。
+4. 测试 Agent 默认不改产品代码、不提交、不合并、不重置分支；发现缺陷后给出复现、期望/实际结果与影响。需要新增测试时先在临时目录或明确分配的 `test/<topic>` 分支工作树完成，并交开发 Agent 审查提交，随后重新验收。
+5. 每轮交接和报告按 [开发交接模板](docs/templates/handoff.md) 与 [测试报告模板](docs/templates/test-report.md) 记录到 `docs/handoffs/<topic>.md`。反馈状态只能是 PASS / FAIL / BLOCKED；列出确切提交、环境、命令/退出码、覆盖范围和未运行项。BLOCKED 是验证受阻，不是通过。
+6. FAIL 时开发 Agent 在原任务分支修复并产生新提交；重新派生干净上下文测试 Agent，交接新 SHA 与缺陷复现。旧报告对新代码不生效。测试工具不可用时保留候选提交并记录阻塞，不能把开发自测包装成独立测试后合入。
+7. 合入前必须有独立 PASS 报告，满足本次验收条件且没有未解决的阻塞项。验收后只允许追加交接报告/开发日志等证据文档；如果修改代码、测试、依赖、脚本、hooks、Makefile 或规范/操作说明，必须重新验收新候选。证据补充也需检查链接和差异格式，并提交。
 
-```bash
-git status --short --branch
-git log -5 --oneline
-git switch -c feat/<topic>   # 新任务按需要创建分支
-# 完成改动和必要验证后，明确选择文件：
-git diff --check
-git add -- <相关文件>
-git diff --cached --stat
-git diff --cached
-git commit -m "fix: describe the concrete change"
-```
+这里的“干净上下文”是明确的上下文交接约束，worktree 隔离的是文件状态。worktree 共享 Git 对象和 refs，不能把它当安全沙箱；测试 Agent 不得修改共享的分支、配置或 hooks。
 
-提交标题使用 `feat:`、`fix:`、`refactor:`、`test:`、`docs:`、`chore:` 等便于浏览的前缀，这是本项目约定。不要混入二进制、缓存、历史和真实凭据；不要覆盖用户改动或擅自 force push / reset 历史。是否推送、发布、合并以用户授权和既有工作约定为准。
+## Git 分支、工作树与开发记录：强制规则
 
-完成有意义的开发工作后更新 `docs/development-log.md`：按日期记录具体问题、改动、实际执行的验证、未验证项和下一步。日志记录证据，不虚构测试、部署或提交；提交 hash 可由 Git 查询，避免在被提交的文档中写入该次提交自身的 hash。
+- `main` 是稳定整合分支；主工作树保留在项目根目录，只更新已验证成果。禁止在 `main` / `master` 直接开发或直接提交（包括文档和小修复）。已有初始化历史保留，不重写。
+- 每个任务从 `main` 建短期分支，并用独立 worktree。分支前缀为 `feat/`、`fix/`、`refactor/`、`test/`、`docs/`、`chore/`、`revert/`、`hotfix/`；后缀说明任务。没有长期 `develop` 分支，未来发布并行确有需要时再规划。
+- 工作树放在项目根下被忽略的 `.worktrees/<topic>`；测试目录为 `.worktrees/verify-<topic>-<short-sha>`。开始工作先确认绝对路径、分支、状态和最近历史，不猜当前目录；同一分支不能同时检出到两个 worktree。
+- 每个新增功能、修复、重构及其他有意义的代码/测试/配置/文档变动都必须有 Git 提交。按可独立解释和回滚的改动拆分，代码、回归测试和对应说明保持一致；不能完成任务后留下未提交的任务修改。不是每次按键一次提交，也不能把多个无关功能压进一次提交。
+- 完成开发自查后提交候选，才能按完整 SHA 独立验收；提交不代表验收通过。长任务或受环境阻塞需要保存时，允许在任务分支提交明确标注 `chore(wip): ...` 的检查点，正文写未完成项和未运行测试；WIP 不能合入 `main`。不要因未验证而丢失已完成开发记录。
+- 提交标题为 `type(scope): description`，scope 可省略，破坏性变化可用 `!`。类型允许 feat/fix/refactor/test/docs/chore/build/ci/perf/style/revert/merge；正文说明原因、行为变化、验证和未验证项。合并消息用 `merge: ...`，这是项目约定。
+- 暂存前审查状态和差异，明确选择相关文件，审查暂存内容并检查空白；不得提交二进制、缓存、历史、凭据、临时 worktree，也不得提交或清理别人的修改。
+- 任务独立验收通过后才整合。当前本地仓库由协调 Agent 在既有用户授权范围内执行 `git merge --no-ff`，保留任务边界与细分提交。今后连接远程平台后走 PR + 独立审查/状态检查；本地 hooks 不是远程保护规则。推送、发布及扩大权限仍以用户授权为准。
+- 合入前确认主工作树干净、`main` 仍等于交接的基线，候选提交仍等于已验收版本（仅允许上述证据文档追加）。如果 `main` 已变，先在任务分支整合最新 `main`，解决冲突后重新独立验收；禁止把未验证的冲突解决直接带入主分支。
+- 回滚也用 `revert/<topic>` 分支与独立验收，优先用 `git revert --no-commit` 生成反向改动，审查暂存差异后以 `revert: ...` 提交，保留历史。撤销合并使用 `git revert --no-commit -m 1 <merge-sha>`，先核实第一父提交和影响；不要用 reset/force push 抹除共享历史。
+- 合并后检查图形历史、状态及两端树内容一致；确认没有未提交/未保留文件，再用 `git worktree remove` 清理测试/开发工作树，用 `git branch -d` 清理已合入分支。不得用 `--force` 或直接 rm 隐藏工作树内容。
+- 每个任务更新 `docs/development-log.md`，记录需求、模块变化、基线/候选、真实检查与未验证项，并关联交接报告。不能在被提交的文件中写该次提交自身 SHA，使用候选/先前提交 SHA 和 Git 历史索引。
+
+仓库携带 `.githooks/pre-commit`（正常提交时的主分支/分支名拦截）和 `.githooks/commit-msg`（标题检查）。每次新 clone 后执行 `git config --local core.hooksPath .githooks` 并检查配置；不要绕过 hooks 或给所有仓库设置全局 hooksPath。自动创建提交的 Git 操作不一定调用相同 hooks，回滚必须遵循上述 `--no-commit` 流程。hooks 只校验本地流程的部分条件，独立测试与合入条件由协调 Agent 检查。
+
+具体操作、交接和回滚步骤见 [开发工作流](docs/workflow.md)。后续 Agent 必须遵守本文件；`AGENTS.md`、`CONTRIBUTING.md` 仅作发现入口，避免复制多份不一致的规范。
