@@ -47,3 +47,31 @@
 - 复现 1：`git revert --no-commit` 的改动在暂存区，旧示例的 `git diff` 输出为空；`git diff --cached` 才能审查实际反向差异。
 - 复现 2：Git 2.43.0 的直接 `git revert -m 1` 自动生成 `Revert "merge: ..."` 提交，并不经过相同的 commit-msg 检查，违反项目标题规则。
 - 修订：统一使用 `--no-commit`、检查暂存差异、用 `revert: ...` 正常提交，并明确 hooks 覆盖边界。修订后的候选需由新的干净上下文测试 Agent 完整复测。
+
+### 第二轮独立报告：PASS
+
+- 测试 Agent：workflow_retest；新派生上下文，只接收最小交接。
+- 基线完整 SHA：`948a7a0153eb4246fed64783b7180849167584d3`。
+- 候选完整 SHA：`42c2c384dba1f72a370c2933878de2416c07c6b2`。
+- 开始/结束 HEAD：均为上述候选，detached。
+- 测试工作树：`/home/liang_guang_can/LingCell/.worktrees/verify-agent-workflow-42c2c38`。
+- 开始/结束状态：`git status --porcelain=v1 --untracked-files=all` 为空；文件 SHA-256、共享 refs/config 前后相同。生成物仅在 /tmp。
+- 环境：Linux、Git 2.43.0、Python 3.13.5，/bin/sh 为 dash；临时 HOME 和虚拟 Git 身份，无远程/凭据/真实供应商访问。
+
+| 条件/检查 | 实际命令或步骤摘要 | 结果 |
+| --- | --- | --- |
+| 规范入口与分工 | 独立阅读入口、规范、交接和模板；审查基线至候选差异 | PASS，角色、上下文、版本隔离及重验规则一致 |
+| 差异与文档 | `git diff --check 948a7a0153eb4246fed64783b7180849167584d3..42c2c384dba1f72a370c2933878de2416c07c6b2`；扫描 10 份 Markdown 的 25 个本地链接及空白 | 退出 0，链接有效、无空白问题 |
+| hooks 语法与文件模式 | `sh -n .githooks/pre-commit`、`sh -n .githooks/commit-msg`、文件模式检查 | 两次退出 0，两个文件均 100755 |
+| 分支及提交标题拦截 | 隔离仓库 main/master/detached/非法分支提交；合法任务分支、12 个合规标题和 12 个非法标题矩阵 | 预期拒绝退出 1，合法提交退出 0，拒绝时 HEAD 不变 |
+| 稳定分支整合 | 临时仓库 `git merge --no-ff feat/integration -m 'merge: integrate feature'`，核查双父及树差异 | 退出 0，父提交和树内容正确 |
+| 普通回滚 | 临时仓库 `git revert --no-commit cf6b7aacd1fb75b6a614d146bbb7cd96f5bf393e`，`git diff --cached`、`git diff --cached --check`，`git commit -m 'revert: undo ordinary change'` | 均退出 0，候选 HEAD 在 no-commit 时不变，暂存区显示反向改动，提交后恢复原树 |
+| 合并回滚 | 临时仓库 `git revert --no-commit -m 1 7ff171d2ed01d6edb215acb9ec91488dac2a0f5b`，审查暂存区，`git commit -m 'revert: undo feature integration'` | 均退出 0，恢复合并第一父树，标题合规 |
+| hooks 边界 | 保留原样 hooks，对照正常提交与直接自动 revert | 复现自动 revert 不经过相同拦截；当前文档准确规定显式提交流程 |
+| 候选完整性 | 开始/结束 SHA、状态、文件哈希与共享配置对比 | PASS，真实源码和共享元数据未修改 |
+
+本次已执行检查未发现缺陷或阻塞；第一轮两个问题已复现并验证修正。独立测试脚本 `python3 /tmp/workflow_retest_42c2c38.py` 与文档检查/报告脚本 `python3 /tmp/workflow_retest_report.py` 均退出 0；记录了 169 条正式命令及各自结果，预期拒绝不等于命令退出 0。
+
+未运行：Go/PTY 产品验收（本次不适用）、真实供应商/SSH、远程推送与发布、服务器分支保护。Git 自动提交的覆盖边界仅在本次 Git 2.43.0 实测；不推断所有命令或其他版本。
+
+本文件保存可追踪的报告摘要；临时完整报告、脚本和原始命令证据位于 `/tmp/lingcell-workflow-retest-42c2c38-_s07ojvi`，不作为永久依赖。协调 Agent 仍需检查主树、基线、候选与后续证据差异，随后才整合。
