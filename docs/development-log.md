@@ -15,7 +15,12 @@
 
 ### 验证状态
 
-开发侧已执行 `make fmt` 和 `git diff --check`，完成格式化且空白检查通过。正式检查尚待候选提交后由新的测试 Agent 在 detached 工作树运行，包含全部 Go token/字面量和构建约束对比、注释审查、`make check`、`make lint`、`make build` 及链接检查；当前不宣称独立验收通过。
+开发侧执行 `make fmt` 和 `git diff --check`，完成格式化且空白检查通过。候选 `d85a0dc74c01c06edf4ad3ab40568e9694ed20db` 已由新的 `go_comments_acceptance` 测试 Agent 在 detached 工作树独立验收，状态 **PASS**，报告摘要保存于 [任务交接](handoffs/go-comments.md)。
+
+- Linux/amd64、Go 1.27.2、Staticcheck 2026.2.1 环境下，全部 15 个 Go 文件共 18,423 token（含字面量和自动分号）、构建/编译/生成指令一致；非 Go 执行文件、依赖和配置未变。注释逐包审查未发现缺陷。
+- `make check`、有效运行的 `make lint`、`make build` 退出 0；7 个内部包竞态测试通过，8 包 Go doc 可读，11 份 Markdown / 27 个本地链接和差异空白检查通过。
+- 初次 Staticcheck 在沙箱缓存只读时提示零包，未作为通过证据；按工具权限流程重跑，再用显式 8 包和独立临时缓存验证，实际分析证据为 5,456 条计时记录，无诊断。
+- 测试开始/结束 HEAD 相同且源码干净，仅生成忽略的 bin/；无缺陷或阻塞。受测候选之后的提交只追加日志/交接证据；实际 no-ff 合并和工作树清理以 Git 历史及最终状态记录。
 
 ### 未验证项
 
