@@ -18,12 +18,18 @@ const maxConfigSize = 64 * 1024
 // Config selects the model service, request limits and input-history location.
 // APIKeyEnv names an environment variable; it never stores a credential value.
 type Config struct {
-	BaseURL        string `json:"base_url"`
-	Model          string `json:"model"`
-	APIKeyEnv      string `json:"api_key_env"`
-	MaxDecisions   int    `json:"max_decisions"`
-	TimeoutSeconds int    `json:"timeout_seconds"`
-	HistoryFile    string `json:"history_file"`
+	// BaseURL is the API root; the client appends /chat/completions.
+	BaseURL string `json:"base_url"`
+	// Model names a model that supports Chat Completions tool calls.
+	Model string `json:"model"`
+	// APIKeyEnv names the credential environment variable, not its value.
+	APIKeyEnv string `json:"api_key_env"`
+	// MaxDecisions bounds model decisions per task; Load defaults it to 8.
+	MaxDecisions int `json:"max_decisions"`
+	// TimeoutSeconds bounds each model request; Load defaults it to 60.
+	TimeoutSeconds int `json:"timeout_seconds"`
+	// HistoryFile stores top-level input. An empty value disables persistence.
+	HistoryFile string `json:"history_file"`
 }
 
 // DefaultPath returns the configuration path in the user's config directory.
@@ -37,6 +43,8 @@ func DefaultPath() string {
 
 // Load reads one JSON object, applying defaults to omitted fields.
 // A missing file returns defaults so Bash can run without a model service.
+// Files over 64 KiB, unknown fields, trailing JSON and invalid limits or URLs
+// are rejected. Load does not read the credential environment variable.
 func Load(path string) (Config, error) {
 	cfg := Config{MaxDecisions: 8, TimeoutSeconds: 60, APIKeyEnv: "LINGCELL_API_KEY"}
 	d, err := os.UserCacheDir()
@@ -51,6 +59,8 @@ func Load(path string) (Config, error) {
 		return cfg, err
 	}
 	defer f.Close()
+	// Read an extra byte to distinguish an oversized file from valid JSON
+	// followed by whitespace; a truncated reader could otherwise accept it.
 	data, err := io.ReadAll(io.LimitReader(f, maxConfigSize+1))
 	if err != nil {
 		return cfg, fmt.Errorf("read config: %w", err)
@@ -68,6 +78,7 @@ func Load(path string) (Config, error) {
 		return cfg, fmt.Errorf("config: %w", err)
 	}
 	var extra any
+	// One successfully decoded object is insufficient if more input follows.
 	if err := dec.Decode(&extra); err != io.EOF {
 		return cfg, errors.New("config must contain one JSON object")
 	}
@@ -87,6 +98,7 @@ func Load(path string) (Config, error) {
 }
 
 // Ready reports whether the model endpoint and model name are configured.
+// It does not verify credentials, connectivity or provider tool-call support.
 func (c Config) Ready() bool {
 	return strings.TrimSpace(c.BaseURL) != "" && strings.TrimSpace(c.Model) != ""
 }

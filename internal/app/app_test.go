@@ -6,6 +6,8 @@ import (
 	"testing"
 )
 
+// TestModelTextCannotSendTerminalControlSequences checks readable escaping of
+// terminal and bidi controls, including the writer's input-byte count contract.
 func TestModelTextCannotSendTerminalControlSequences(t *testing.T) {
 	var output bytes.Buffer
 	data := []byte("explanation\n\x1b[2J\u202Ehidden\ttext")

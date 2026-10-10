@@ -13,6 +13,8 @@ import (
 	"lingcell/internal/shell"
 )
 
+// mockModel records conversation snapshots and consumes one scripted reply per
+// request. The wait mode exercises cancellation without a network dependency.
 type mockModel struct {
 	replies  []model.Message
 	requests [][]model.Message
@@ -23,6 +25,8 @@ type failingOutput struct{}
 
 func (failingOutput) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 
+// TestOutputFailureStopsBeforeConfirmation verifies that an unreadable proposal
+// cannot reach either the approval callback or command execution.
 func TestOutputFailureStopsBeforeConfirmation(t *testing.T) {
 	next := call("1", "run_command", `{"command":"touch marker","purpose":"test"}`)
 	next.Content = "proposal"
@@ -51,6 +55,8 @@ func (m *mockModel) Complete(ctx context.Context, msg []model.Message, _ []model
 	return next, nil
 }
 
+// mockShell records execution attempts; a nonzero result models a completed
+// command rather than a transport failure.
 type mockShell struct {
 	commands []string
 	result   shell.Result
@@ -65,6 +71,8 @@ func (s *mockShell) Run(_ context.Context, c string) (shell.Result, error) {
 	return r, nil
 }
 
+// mockReader supplies instruction-like file text to exercise tool-data framing.
+// Path confinement itself is tested by the project package.
 type mockReader struct{ reads []string }
 
 func (r *mockReader) ReadFile(p string) (project.Data, error) {
@@ -81,6 +89,9 @@ func (r *mockReader) ListFiles(p string) (project.Data, error) {
 func call(id, name, args string) model.Message {
 	return model.Message{Role: "assistant", ToolCalls: []model.ToolCall{{ID: id, Type: "function", Function: model.FunctionCall{Name: name, Arguments: args}}}}
 }
+
+// TestMultiStepAndFailureFeedback verifies per-command approval and failure
+// feedback in the same task, with file contents retained as tool data.
 func TestMultiStepAndFailureFeedback(t *testing.T) {
 	m := &mockModel{replies: []model.Message{call("1", "list_files", `{"path":"."}`), call("2", "read_file", `{"path":"main.go"}`), call("3", "run_command", `{"command":"false","purpose":"check"}`), call("4", "run_command", `{"command":"echo repaired","purpose":"repair"}`), {Role: "assistant", Content: "done"}}}
 	s := &mockShell{result: shell.Result{ExitCode: 1, Output: "failure", Truncated: true}}
@@ -108,6 +119,9 @@ func TestMultiStepAndFailureFeedback(t *testing.T) {
 		t.Fatal("file content was promoted to instructions")
 	}
 }
+
+// TestDeclineAndInvalidCallsNeverExecute checks that refusal and invalid
+// proposals terminate the task without granting execution authority.
 func TestDeclineAndInvalidCallsNeverExecute(t *testing.T) {
 	valid := call("1", "run_command", `{"command":"touch marker","purpose":"test"}`)
 	double := valid
@@ -126,6 +140,9 @@ func TestDeclineAndInvalidCallsNeverExecute(t *testing.T) {
 		})
 	}
 }
+
+// TestTimeoutLimitAndReadDenial distinguishes task-stopping limits and
+// cancellation from file-access errors that can be returned as tool data.
 func TestTimeoutLimitAndReadDenial(t *testing.T) {
 	s := &mockShell{}
 	a := Agent{Model: &mockModel{wait: true}, Shell: s, Reader: &mockReader{}, Timeout: 10 * time.Millisecond}
@@ -152,6 +169,8 @@ func TestTimeoutLimitAndReadDenial(t *testing.T) {
 	}
 }
 
+// TestPriorFailureRemainsToolData checks that diagnosis neither promotes
+// captured output to user instructions nor replays the failed command.
 func TestPriorFailureRemainsToolData(t *testing.T) {
 	m := &mockModel{replies: []model.Message{{Role: "assistant", Content: "diagnosis"}}}
 	s := &mockShell{}

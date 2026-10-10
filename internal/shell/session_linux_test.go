@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+// session starts Bash with an isolated startup file and registers its cleanup.
+// The startup deadline does not govern commands after Start returns.
 func session(t *testing.T, rc string) *Session {
 	t.Helper()
 	dir := t.TempDir()
@@ -25,6 +27,9 @@ func session(t *testing.T, rc string) *Session {
 	t.Cleanup(s.Close)
 	return s
 }
+
+// run bounds each command independently and fails on session transport errors.
+// Nonzero Bash statuses remain available for the caller's assertions.
 func run(t *testing.T, s *Session, command string) Result {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -35,6 +40,9 @@ func run(t *testing.T, s *Session, command string) Result {
 	}
 	return result
 }
+
+// TestStateAndBashSemantics checks that startup definitions and later mutations
+// survive across commands, while Bash evaluates compound and multiline syntax.
 func TestStateAndBashSemantics(t *testing.T) {
 	s := session(t, `alias personal='printf personal'; personal_fn(){ printf fn; }`)
 	for _, command := range []string{"mkdir child", "cd child", "export LC_TEST=persisted", "alias hi='printf alias'", "greet(){ printf function; }"} {
@@ -57,11 +65,16 @@ func TestStateAndBashSemantics(t *testing.T) {
 	if !strings.Contains(r.Output, "one\r\ntwo") {
 		t.Fatalf("heredoc: %+v", r)
 	}
+	// This exceeds the terminal's canonical input line limit: commands must
+	// travel through the command pipe rather than be typed into the PTY.
 	r = run(t, s, "printf '%s' "+Quote(strings.Repeat("x", 9000)))
 	if len(r.Output) != 9000 {
 		t.Fatalf("long command truncated at PTY boundary: %d", len(r.Output))
 	}
 }
+
+// TestPromptHooksAndStatus verifies that personal hooks see the command status
+// and that protocol records never appear in captured terminal output.
 func TestPromptHooksAndStatus(t *testing.T) {
 	s := session(t, `printf 'startup\n'; PROMPT_COMMAND=('printf "hook-one\n"' 'printf "hook-two\n"'); PS1='CUSTOM>'`)
 	r := run(t, s, "false")
@@ -77,6 +90,9 @@ func TestPromptHooksAndStatus(t *testing.T) {
 		t.Fatalf("old hook status: %+v", r)
 	}
 }
+
+// TestFailureCancelAndTruncation checks Bash syntax errors, bounded capture and
+// foreground cancellation that leaves the persistent session usable.
 func TestFailureCancelAndTruncation(t *testing.T) {
 	s := session(t, "")
 	if r := run(t, s, "printf )"); r.ExitCode != 2 || !strings.Contains(r.Output, "syntax error") {
@@ -99,10 +115,13 @@ func TestFailureCancelAndTruncation(t *testing.T) {
 		t.Fatalf("session lost: %+v", r)
 	}
 }
+
+// TestJobControl exercises stopping, listing, resuming and interrupting a job
+// in the same Bash session.
 func TestJobControl(t *testing.T) {
 	s := session(t, "")
-	// STOP via the PTY's foreground process group produces the same Bash path
-	// as Ctrl-Z, without needing to steal the test runner's terminal input.
+	// Write Ctrl-Z into the PTY so its line discipline signals the foreground
+	// job without taking over the test runner's terminal input.
 	done := make(chan Result, 1)
 	fail := make(chan error, 1)
 	go func() {
@@ -144,6 +163,9 @@ func TestJobControl(t *testing.T) {
 		t.Fatalf("fg/cancel: %+v %v", r, err)
 	}
 }
+
+// TestHookLossAndExit checks that broken control hooks and Bash exit are
+// reported as session errors before the command deadline expires.
 func TestHookLossAndExit(t *testing.T) {
 	for _, command := range []string{"unset PROMPT_COMMAND", "unset -f __lc_report", "exec 3>&-", "exit"} {
 		t.Run(command, func(t *testing.T) {

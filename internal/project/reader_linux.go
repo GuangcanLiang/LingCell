@@ -24,7 +24,10 @@ const TaskLimit = 256 * 1024
 
 // Reader owns a directory descriptor for a fixed, canonical project root.
 // Call Close after the last task; closing concurrently with reads is unsupported.
+// A Reader must not be copied after use.
 type Reader struct {
+	// Root is the canonical scope selected at startup. Treat it as read-only:
+	// path checks and the open directory descriptor must refer to the same root.
 	Root      string
 	fd        int
 	closeOnce sync.Once
@@ -32,6 +35,7 @@ type Reader struct {
 }
 
 // Task tracks one task's read budget. A Task must not be shared by goroutines.
+// It borrows the Reader, which must remain open for all of the Task's operations.
 type Task struct {
 	reader *Reader
 	used   int
@@ -44,7 +48,9 @@ type Data struct {
 	Truncated bool   `json:"truncated"`
 }
 
-// New fixes the reading scope to the nearest Git root, or start without Git.
+// New fixes the reading scope to the nearest ancestor containing .git, or to
+// start if none exists. start must identify an existing directory; its symlinks
+// are resolved before choosing the root. The caller owns the returned Reader.
 func New(start string) (*Reader, error) {
 	root, err := filepath.Abs(start)
 	if err != nil {
@@ -71,14 +77,19 @@ func New(start string) (*Reader, error) {
 }
 
 // Close releases the root descriptor. Repeated calls return the first result.
+// Tasks must not be used after Close.
 func (r *Reader) Close() error {
 	r.closeOnce.Do(func() { r.closeErr = unix.Close(r.fd) })
 	return r.closeErr
 }
 
 // NewTask creates an independent reading budget for an Agent task.
+// All file and listing tools in the same task must share this budget.
 func (r *Reader) NewTask() *Task { return &Task{reader: r} }
 
+// excluded checks each path component for sensitive or bulky content.
+// These exclusions also apply to resolved symlink targets and take precedence
+// over .gitignore negation, so an ignore rule cannot grant access to a secret.
 func excluded(rel string) bool {
 	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
 		lower := strings.ToLower(part)
@@ -100,8 +111,10 @@ func excluded(rel string) bool {
 	return false
 }
 
-// Open the canonical path without permitting symlinks to be substituted between
-// validation and open. openat2 also enforces the root boundary in the kernel.
+// open opens a canonical relative path beneath the pinned root descriptor.
+// openat2 rejects symlinks introduced after validation and enforces the root
+// boundary in the kernel. Nonblocking IO lets special files be checked without
+// waiting for a writer; ReadFile subsequently requires a regular text file.
 func (r *Reader) open(rel string) (*os.File, error) {
 	fd, err := unix.Openat2(r.fd, rel, &unix.OpenHow{Flags: unix.O_RDONLY | unix.O_CLOEXEC | unix.O_NONBLOCK, Resolve: unix.RESOLVE_BENEATH | unix.RESOLVE_NO_SYMLINKS})
 	if err != nil {
@@ -110,6 +123,9 @@ func (r *Reader) open(rel string) (*os.File, error) {
 	return os.NewFile(uintptr(fd), rel), nil
 }
 
+// checked validates the requested path and returns its canonical relative form.
+// Both the requested alias and resolved target must pass exclusions and ignore
+// rules. The result still needs open's kernel checks to resist symlink races.
 func (r *Reader) checked(path string) (string, error) {
 	if filepath.IsAbs(path) {
 		return "", errors.New("use a project-relative path")
@@ -142,6 +158,10 @@ func (r *Reader) checked(path string) (string, error) {
 	return real, nil
 }
 
+// checkIgnore applies root-to-leaf ignore rules to every path component.
+// An ignored directory stops traversal before a descendant can negate its rule.
+// Missing ignore files are allowed; unsafe, unreadable or oversized ones fail
+// closed rather than silently admitting content.
 func (r *Reader) checkIgnore(rel string) error {
 	if rel == "." {
 		return nil
@@ -184,6 +204,8 @@ func (r *Reader) checkIgnore(rel string) error {
 			}
 			isDir = st.IsDir()
 		}
+		// Later, deeper rules override earlier matches for the same component,
+		// but a directory excluded on an earlier iteration stays inaccessible.
 		ignored := false
 		for _, matcher := range ignores {
 			if m := matcher.Absolute(candidate, isDir); m != nil {
@@ -197,6 +219,9 @@ func (r *Reader) checkIgnore(rel string) error {
 	return nil
 }
 
+// finish applies per-result and cumulative byte limits to text already checked
+// by the caller. Truncation trims a partial UTF-8 suffix, but exhaustion of the
+// task budget returns an error instead of silently returning less content.
 func (t *Task) finish(path, content string, truncated bool) (Data, error) {
 	if len(content) > FileLimit {
 		content = content[:FileLimit]
@@ -214,6 +239,9 @@ func (t *Task) finish(path, content string, truncated bool) (Data, error) {
 }
 
 // ReadFile reads an allowed UTF-8 regular file relative to the fixed root.
+// Safe in-scope symlinks are canonicalized; excluded or ignored aliases/targets
+// are rejected. NUL bytes and recognizable private-key headers are not returned.
+// Content above FileLimit is truncated and charged to the task's shared budget.
 func (t *Task) ReadFile(path string) (Data, error) {
 	rel, err := t.reader.checked(path)
 	if err != nil {
@@ -255,6 +283,9 @@ func (t *Task) ReadFile(path string) (Data, error) {
 }
 
 // ListFiles lists at most 256 allowed entries in a project-relative directory.
+// Entry order follows the filesystem, not a sort. Enumeration examines at most
+// 4096 entries, filtering forbidden paths before applying the output limits.
+// A truncated result is explicit, and listing bytes consume the task budget.
 func (t *Task) ListFiles(path string) (Data, error) {
 	rel, err := t.reader.checked(path)
 	if err != nil {

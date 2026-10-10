@@ -1,5 +1,7 @@
 //go:build linux
 
+// Lingcell runs an interactive Bash with confirmed, model-assisted tasks.
+// It requires a terminal; an absent model configuration leaves Bash usable.
 package main
 
 import (
@@ -21,6 +23,9 @@ import (
 )
 
 func main() { os.Exit(run()) }
+
+// run owns startup and cleanup and returns the process exit code.
+// Keeping cleanup here lets deferred terminal restoration run before os.Exit.
 func run() int {
 	path := flag.String("config", config.DefaultPath(), "JSON configuration path")
 	noHistory := flag.Bool("no-history", false, "do not persist input history")
@@ -67,6 +72,8 @@ func run() int {
 		return 1
 	}
 	defer sess.Close()
+	// The active cancel function is shared by the signal goroutine and interaction
+	// loop. Copy it under the lock, then call it outside the critical section.
 	var mu sync.Mutex
 	var taskCancel context.CancelFunc
 	signals := make(chan os.Signal, 2)
@@ -74,6 +81,8 @@ func run() int {
 	defer signal.Stop(signals)
 	finished := make(chan struct{})
 	defer close(finished)
+	// Normal return closes finished. Termination signals exit the process after
+	// explicit cleanup because os.Exit does not execute deferred functions.
 	go func() {
 		for {
 			select {
@@ -96,6 +105,8 @@ func run() int {
 	a := app.App{Shell: sess, Reader: reader, Model: model.New(cfg), Config: cfg, Output: os.Stdout}
 	a.WithCancel = func(cancel context.CancelFunc) func() {
 		mu.Lock()
+		// Classification can enter a nested command or Agent task. Restoring the
+		// previous handler keeps Ctrl-C bound to the enclosing active task.
 		previous := taskCancel
 		taskCancel = cancel
 		mu.Unlock()

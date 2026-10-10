@@ -7,6 +7,8 @@ import (
 	"testing"
 )
 
+// TestConfiguration checks missing-file defaults, model readiness and strict
+// rejection of unknown fields, invalid limits, unsafe URLs and trailing JSON.
 func TestConfiguration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	c, err := Load(path)
@@ -30,6 +32,8 @@ func TestConfiguration(t *testing.T) {
 	}
 }
 
+// TestRejectOversizedAndNullConfig checks that a valid prefix cannot hide an
+// oversized document and that null cannot masquerade as a configuration object.
 func TestRejectOversizedAndNullConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	for _, data := range []string{"null", "{}" + strings.Repeat(" ", maxConfigSize) + "{}"} {
