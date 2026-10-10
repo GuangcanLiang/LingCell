@@ -2,6 +2,8 @@ package router
 
 import "testing"
 
+// TestRouting checks local command precedence over natural-language hints,
+// unknown-command ambiguity and continuation for incomplete Bash syntax.
 func TestRouting(t *testing.T) {
 	r := Router{Knows: func(s string) bool { return s == "ls" || s == "echo" || s == "find" || s == "myalias" }}
 	cases := map[string]Kind{"": Shell, "ls -la": Shell, "myalias": Shell, "echo 中文": Shell, "FOO=中文": Shell, "请找出大文件": Agent, "please inspect this project": Agent, "lss -la": Ambiguous, "locate large files": Ambiguous, "find large files": Shell, "echo 'unfinished": Incomplete, "echo $(": Incomplete, "printf )": Ambiguous, "ls | head": Shell, "for i in a; do": Incomplete, "./script": Shell}
@@ -14,6 +16,9 @@ func TestRouting(t *testing.T) {
 		t.Fatal("continuation failed")
 	}
 }
+
+// TestFailurePolicy confines normal-negative exemptions to simple commands
+// and keeps interruption and stopped jobs out of automatic diagnosis.
 func TestFailurePolicy(t *testing.T) {
 	cases := []struct {
 		command string

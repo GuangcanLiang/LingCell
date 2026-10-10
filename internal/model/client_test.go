@@ -13,6 +13,8 @@ import (
 	"lingcell/internal/config"
 )
 
+// TestHTTPToolProtocol checks tool-call IDs and disabled parallel calls against
+// a local server. The credential is a fixture, never a provider key.
 func TestHTTPToolProtocol(t *testing.T) {
 	t.Setenv("TEST_LINGCELL_KEY", "mock-secret-never-a-real-key")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -41,6 +43,9 @@ func TestHTTPToolProtocol(t *testing.T) {
 		t.Fatalf("tool response: %+v %v", m, err)
 	}
 }
+
+// TestClassificationAndFailures verifies strict classification responses and
+// that remote response bodies do not leak through user-visible errors.
 func TestClassificationAndFailures(t *testing.T) {
 	for _, test := range []struct {
 		name, response string
@@ -70,6 +75,9 @@ func TestClassificationAndFailures(t *testing.T) {
 		})
 	}
 }
+
+// TestCancellationAndNoRedirect checks that errors.Is recognizes deadlines
+// and that a redirect cannot forward the request to another endpoint.
 func TestCancellationAndNoRedirect(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {

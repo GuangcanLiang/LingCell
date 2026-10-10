@@ -25,6 +25,8 @@ import (
 
 // App owns one CLI interaction loop. Configure its dependencies before Init;
 // Init and Run must be called serially from the same interaction goroutine.
+// The caller owns Shell and Reader and closes them after Run. Model may report
+// missing configuration while normal shell commands remain available.
 type App struct {
 	Shell        *shell.Session
 	Reader       *project.Reader
@@ -35,10 +37,15 @@ type App struct {
 	confirmation *readline.Shell
 	last         *shell.Result
 	// WithCancel installs the cancellation handler for one model/command task.
+	// It returns a function that restores the prior handler, including when
+	// classification enters a nested task. Nil leaves signal management to callers.
 	WithCancel func(context.CancelFunc) func()
 }
 
 // Init installs the editors and optional persistent input history.
+// Shell, Reader, Model and Output must be configured before Init and Run.
+// Only the top-level editor gets persistent history; confirmation answers use
+// a separate editor. Call Init once for an App.
 func (a *App) Init(noHistory bool) error {
 	a.Editor = readline.NewShell()
 	a.confirmation = readline.NewShell()
@@ -141,6 +148,10 @@ func (a *App) Init(noHistory bool) error {
 	}
 	return nil
 }
+
+// visible escapes terminal control and Unicode formatting characters while
+// retaining newlines and tabs. Model prose and confirmation metadata must use
+// this path so text cannot send terminal commands or hide text with bidi marks.
 func visible(s string) string {
 	var out strings.Builder
 	for _, r := range s {
@@ -153,12 +164,17 @@ func visible(s string) string {
 	return out.String()
 }
 
+// modelOutput applies visible to model prose, leaving raw Bash PTY output alone.
 type modelOutput struct{ io.Writer }
 
+// Write reports consumed input bytes, even when escaping expands the text.
 func (w modelOutput) Write(data []byte) (int, error) {
 	_, err := io.WriteString(w.Writer, visible(string(data)))
 	return len(data), err
 }
+
+// confirm displays the literal proposal and accepts only y or yes.
+// Empty input, an interrupt or EOF rejects it; no command is executed here.
 func (a *App) confirm(command, cwd, purpose string) (bool, error) {
 	fmt.Fprintf(a.Output, "\n目的：%s\n目录：%s\n命令：\n%s\n", visible(purpose), visible(cwd), visible(command))
 	a.confirmation.Prompt.Primary(func() string { return "执行？[y/N] " })
@@ -171,6 +187,9 @@ func (a *App) confirm(command, cwd, purpose string) (bool, error) {
 	}
 	return strings.EqualFold(strings.TrimSpace(answer), "y") || strings.EqualFold(strings.TrimSpace(answer), "yes"), nil
 }
+
+// task scopes cancellation and temporarily registers it with signal handling.
+// Deferred reset restores the enclosing task when classification nests a call.
 func (a *App) task(ctx context.Context, fn func(context.Context) error) error {
 	taskCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -180,12 +199,19 @@ func (a *App) task(ctx context.Context, fn func(context.Context) error) error {
 	}
 	return fn(taskCtx)
 }
+
+// ask starts an Agent with a fresh read budget and sanitized explanatory output.
+// Any prior user-command result stays tool data for diagnosis, not instructions.
 func (a *App) ask(ctx context.Context, request string, previous ...shell.Result) error {
 	return a.task(ctx, func(ctx context.Context) error {
 		runner := agent.Agent{Model: a.Model, Shell: a.Shell, Reader: a.Reader.NewTask(), Confirm: a.confirm, Output: modelOutput{a.Output}, MaxDecisions: a.Config.MaxDecisions, Timeout: time.Duration(a.Config.TimeoutSeconds) * time.Second}
 		return runner.Run(ctx, request, a.Reader.Root, previous...)
 	})
 }
+
+// execute runs user-issued input and saves its result for :fix.
+// Only this path automatically diagnoses failures; Agent command results remain
+// in the current Agent loop rather than recursively starting another task.
 func (a *App) execute(ctx context.Context, command string) error {
 	var result shell.Result
 	err := a.task(ctx, func(ctx context.Context) error { var err error; result, err = a.Shell.Run(ctx, command); return err })
@@ -202,6 +228,8 @@ func (a *App) execute(ctx context.Context, command string) error {
 	}
 	return nil
 }
+
+// fix asks the Agent to diagnose the last completed user command without replay.
 func (a *App) fix(ctx context.Context) error {
 	if a.last == nil {
 		return errors.New("没有可诊断的命令")
@@ -211,6 +239,9 @@ func (a *App) fix(ctx context.Context) error {
 
 // Run handles input until exit, EOF or a session error.
 // WithCancel integrates signals for active model and shell tasks.
+// Individual command or model errors are displayed and leave the loop usable.
+// ctx cancellation is observed between inputs and by active tasks; an idle
+// Readline call is controlled by terminal interrupts rather than ctx alone.
 func (a *App) Run(ctx context.Context) error {
 	fmt.Fprintln(a.Output, "LingCell — :help 查看帮助；:ai 请求 Agent；:sh 强制 Bash。")
 	for {
@@ -275,6 +306,8 @@ func (a *App) Run(ctx context.Context) error {
 						if !yes {
 							return agent.ErrDeclined
 						}
+						// Classification suggests a route, not permission:
+						// even command-like ambiguous input needs confirmation.
 						return a.execute(ctx, input)
 					}
 					return a.ask(ctx, input)

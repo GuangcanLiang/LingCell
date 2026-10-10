@@ -26,6 +26,8 @@ import (
 const OutputLimit = 64 * 1024
 
 // Result contains the command status and merged PTY output for a completed run.
+// Output may include terminal escape sequences and background-job or prompt-hook
+// output. It is a bounded byte capture, not separate stdout and stderr streams.
 type Result struct {
 	Command   string `json:"command"`
 	ExitCode  int    `json:"exit_code"`
@@ -34,13 +36,20 @@ type Result struct {
 	Truncated bool   `json:"truncated"`
 }
 
-// Options configures a session. Nil Output discards live output; nil Input
-// disables terminal input forwarding. RCFile overrides ~/.bashrc for tests.
+// Options configures a session. The caller retains ownership of Input and Output.
 type Options struct {
+	// Dir selects Bash's initial directory; empty uses the process directory.
+	// RCFile overrides ~/.bashrc, primarily for isolated tests.
 	Dir, RCFile string
-	Output      io.Writer
-	Input       *os.File
+	// Output receives live PTY bytes; nil discards them. Writes are synchronous
+	// in the output pump, so the writer must not block indefinitely.
+	Output io.Writer
+	// Input supplies terminal input and size; nil disables input forwarding.
+	Input *os.File
 }
+
+// event is one complete record from the private Bash control pipe.
+// An error record ends the session; it is never interpreted as command output.
 type event struct {
 	code  int
 	cwd   string
@@ -51,28 +60,35 @@ type event struct {
 
 // Session owns a Bash process and its terminal/control descriptors.
 // Run calls are serialized. Cwd, Names and Knows can be queried concurrently.
-// Close is idempotent and may interrupt an active Run.
+// Close is idempotent and may interrupt an active Run. A Session must not be
+// copied after use; the caller closes it before releasing shared IO resources.
 type Session struct {
 	cmd                         *exec.Cmd
 	terminal, control, commands *os.File
-	ttyFD, controlFD            int
-	events                      chan event
-	done                        chan struct{}
-	stopped                     chan struct{}
-	mu                          sync.Mutex
-	runMu                       sync.Mutex
-	cwd                         string
-	names                       []string
-	path                        string
-	capture                     []byte
-	truncated                   bool
-	output                      io.Writer
-	input                       *os.File
-	closeOnce                   sync.Once
+	// Cache descriptor numbers before enabling nonblocking IO. Calling File.Fd
+	// during polling can restore blocking mode and stall the drain loop.
+	ttyFD, controlFD int
+	events           chan event
+	// done follows process exit; stopped follows output-pump exit. Close waits
+	// for both before releasing the polled descriptors.
+	done    chan struct{}
+	stopped chan struct{}
+	// mu guards reported shell state and capture; runMu serializes dispatch.
+	mu        sync.Mutex
+	runMu     sync.Mutex
+	cwd       string
+	names     []string
+	path      string
+	capture   []byte
+	truncated bool
+	output    io.Writer
+	input     *os.File
+	closeOnce sync.Once
 }
 
 // Start launches an interactive Bash and waits for its startup control event.
-// The caller owns the returned session and must close it.
+// The caller owns the returned session and must close it. ctx controls startup
+// only; after Start returns, each Run has its own cancellation context.
 func Start(ctx context.Context, opts Options) (*Session, error) {
 	rc := opts.RCFile
 	if rc == "" {
@@ -108,6 +124,8 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 	cmd := exec.Command("bash", "--noprofile", "--rcfile", startup.Name(), "-i")
 	cmd.Dir = opts.Dir
 	cmd.Env = append(os.Environ(), "HISTFILE=/dev/null")
+	// ExtraFiles become fd 3 (Bash-to-Go control) and fd 4 (Go-to-Bash command).
+	// Both are separate from the PTY, so user prompts cannot imitate completion.
 	cmd.ExtraFiles = []*os.File{cw, qr}
 	tty, err := pty.Start(cmd)
 	cw.Close()
@@ -156,6 +174,11 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 	return s, nil
 }
 
+// hook installs the private completion protocol after the user's rc file.
+// __lc_save captures status before existing prompt hooks change it and returns
+// that same status so their initial $? is preserved. __lc_report sends five
+// NUL-terminated fields: ready, status, physical cwd, command names and PATH.
+// Bash strings cannot contain NUL, so embedded newlines do not break framing.
 const hook = `
 # Install after the user's rc file, preserving both scalar and array hooks.
 __lc_old_prompt=("${PROMPT_COMMAND[@]}")
@@ -176,6 +199,8 @@ stty -echo
 // Quote returns a single literal Bash word, escaping embedded single quotes.
 func Quote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
 
+// update publishes Bash's latest reported state without sharing mutable slices
+// with callers of Names.
 func (s *Session) update(ev event) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -198,7 +223,8 @@ func (s *Session) Names() []string {
 	return append([]string(nil), s.names...)
 }
 
-// Knows resolves Bash names and executable files in the current shell PATH.
+// Knows checks reported Bash names and executable files in its reported PATH.
+// It performs no shell expansion or execution; relative PATH entries use Cwd.
 func (s *Session) Knows(name string) bool {
 	for _, n := range s.Names() {
 		if n == name {
@@ -227,7 +253,9 @@ func (s *Session) Knows(name string) bool {
 func (s *Session) Done() <-chan struct{} { return s.done }
 
 // pump reads both descriptors in one goroutine. Before publishing a control event
-// it drains the PTY, so output preceding the event is included in the result.
+// it drains the available PTY bytes, avoiding a race between output capture and
+// completion. Separate pipes do not provide a total ordering of later background
+// output. Process exit or a control-channel error ends the goroutine.
 func (s *Session) pump() {
 	defer close(s.stopped)
 	tfd, cfd := s.ttyFD, s.controlFD
@@ -237,6 +265,7 @@ func (s *Session) pump() {
 		for {
 			n, err := unix.Read(tfd, buf)
 			if n > 0 {
+				// Live output is independent of the model's capture budget.
 				_, _ = s.output.Write(buf[:n])
 				s.mu.Lock()
 				left := OutputLimit - len(s.capture)
@@ -277,6 +306,8 @@ func (s *Session) pump() {
 				return
 			}
 			for bytes.Count(pending, []byte{0}) >= 5 {
+				// Control reads may split a field or contain multiple records;
+				// consume only full frames and retain the unfinished suffix.
 				fields := make([]string, 5)
 				for i := range fields {
 					end := bytes.IndexByte(pending, 0)
@@ -304,6 +335,9 @@ func (s *Session) pump() {
 		}
 	}
 }
+
+// publish queues a control record or returns after Bash exits.
+// The done case lets Close release a pump blocked behind unread events.
 func (s *Session) publish(ev event) {
 	select {
 	case s.events <- ev:
@@ -314,6 +348,10 @@ func (s *Session) publish(ev event) {
 // Run executes one command at Bash's top level without replaying on failure.
 // Cancellation interrupts the foreground process group; an acknowledged
 // interrupt returns its exit code, while an unresponsive session is closed.
+//
+// A nonzero exit code with nil error means Bash reported a completed command.
+// A transport error does not establish whether effects occurred. Commands must
+// contain no NUL and be at most 1 MiB; returned capture is bounded by OutputLimit.
 func (s *Session) Run(ctx context.Context, command string) (Result, error) {
 	s.runMu.Lock()
 	defer s.runMu.Unlock()
@@ -347,6 +385,9 @@ func (s *Session) Run(ctx context.Context, command string) (Result, error) {
 		return result, err
 	}
 	writeDone := make(chan error, 1)
+	// A large command may fill the pipe. Writing asynchronously allows dispatch
+	// cancellation to close the session instead of waiting on a blocked write;
+	// the buffered result channel also lets the writer finish after Run returns.
 	go func() { _, err := s.commands.WriteString(command + "\x00"); writeDone <- err }()
 	select {
 	case err := <-writeDone:
@@ -394,6 +435,7 @@ func (s *Session) Run(ctx context.Context, command string) (Result, error) {
 }
 
 // CancelForeground sends SIGINT to the PTY's current foreground process group.
+// It is best effort: the job can exit between querying its group and signaling.
 func (s *Session) CancelForeground() {
 	pgid, err := unix.IoctlGetInt(s.ttyFD, unix.TIOCGPGRP)
 	if err == nil && pgid > 0 {
@@ -402,6 +444,7 @@ func (s *Session) CancelForeground() {
 }
 
 // Resize copies the input terminal's dimensions to the PTY when available.
+// Unavailable dimensions and a terminal that is already closing are ignored.
 func (s *Session) Resize() {
 	if s.input != nil {
 		if size, err := unix.IoctlGetWinsize(int(s.input.Fd()), unix.TIOCGWINSZ); err == nil {
@@ -409,6 +452,11 @@ func (s *Session) Resize() {
 		}
 	}
 }
+
+// forwardInput temporarily hands terminal input to the PTY in raw mode.
+// The returned restore function must be called exactly once after success; it
+// stops and joins the forwarding goroutine before restoring the terminal mode.
+// Raw Ctrl-C/Ctrl-Z bytes reach Bash's PTY line discipline and foreground job.
 func (s *Session) forwardInput() (func(), error) {
 	if s.input == nil || !term.IsTerminal(int(s.input.Fd())) {
 		return func() {}, nil
@@ -456,6 +504,8 @@ func (s *Session) forwardInput() (func(), error) {
 }
 
 // Close stops Bash, waits for its reader goroutine and releases all descriptors.
+// It first hangs up the foreground job and shell, then kills Bash if it does not
+// exit within the grace period. Terminal input restoration remains Run's job.
 func (s *Session) Close() {
 	s.closeOnce.Do(func() {
 		if pgid, err := unix.IoctlGetInt(s.ttyFD, unix.TIOCGPGRP); err == nil && pgid > 0 && pgid != s.cmd.Process.Pid {

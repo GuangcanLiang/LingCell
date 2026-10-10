@@ -55,6 +55,16 @@ LingCell 是 Linux 上的 Go 原生 AI Agent Shell：Go 编辑和路由输入，
 
 规范依据：[Go 模块组织](https://go.dev/doc/modules/layout)、[Go Code Review Comments](https://go.dev/wiki/CodeReviewComments)、[Effective Go](https://go.dev/doc/effective_go)。具体检查结果见 [Go 检查记录](docs/go-review.md) 与 [开发日志](docs/development-log.md)，工具通过不代表所有设计或运行环境都已覆盖。
 
+### 注释约定
+
+采用 [Google Go Style Guide 的注释约定](https://google.github.io/styleguide/go/decisions#commentary) 和 [Go 官方 Doc Comments](https://go.dev/doc/comment)，以现有代码和可验证行为为准。
+
+- Go 源码沿用英文注释，维护文档使用中文。导出名称的文档注释以该名称开头，使用完整句子；非直观的未导出声明也采用这一形式。每个包只放一份包说明，命令包说明以命令名称开头。
+- 优先解释调用条件、默认值、错误与非零退出码的区别、资源所有权、取消及并发约束。复杂逻辑说明为什么这样做和必须保持的条件，避免逐行翻译代码。测试注释解释所验证的条件，不能把未覆盖的场景写成已验证。
+- 使用自然的 Go doc 段落；不套用 Java 的 `@param` / `@return` 模板。按可读性换行，不强制机械字符上限；格式由 `gofmt` 处理。不添加作者、时间或重复 Git 历史的文件头。
+- 注释必须与代码同步维护，不能夸大安全边界或保证；命令执行提案仍由程序确认流程控制。构建指令、生成指令和字符串内的 Bash 内容有执行语义，修改它们不能视为普通注释改动。
+- 仅补充注释时不顺便重构；验收需核对描述与实现，并证明可执行 token、字符串和构建约束未变，再按改动范围运行检查。后续修改契约或行为时同时更新相关注释。
+
 ## 验证命令
 
 ```bash

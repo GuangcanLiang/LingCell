@@ -12,9 +12,13 @@ import (
 type Kind string
 
 const (
-	Shell      Kind = "shell"
-	Agent      Kind = "agent"
-	Ambiguous  Kind = "ambiguous"
+	// Shell selects direct Bash execution, including empty input.
+	Shell Kind = "shell"
+	// Agent selects a natural-language task.
+	Agent Kind = "agent"
+	// Ambiguous requests model classification before choosing an action.
+	Ambiguous Kind = "ambiguous"
+	// Incomplete requests another line for recognized, unfinished shell input.
 	Incomplete Kind = "incomplete"
 )
 
@@ -25,6 +29,7 @@ type Decision struct {
 }
 
 // Router applies local rules using the current Bash command-name resolver.
+// A nil Knows disables name-based recognition; syntax rules still apply.
 type Router struct{ Knows func(string) bool }
 
 func parse(input string) (*syntax.File, error) {
@@ -32,6 +37,9 @@ func parse(input string) (*syntax.File, error) {
 }
 
 // Route classifies input without expanding or executing shell expressions.
+// Known Bash names and explicit shell structure take precedence over language
+// heuristics. Unknown input may need model classification, even after a parse
+// error; recognized shell syntax errors are left for Bash to report.
 func (r Router) Route(input string) Decision {
 	input = strings.TrimSpace(input)
 	if input == "" {
@@ -40,6 +48,8 @@ func (r Router) Route(input string) Decision {
 	first := strings.Fields(input)[0]
 	known := r.Knows != nil && r.Knows(first)
 	file, err := parse(input)
+	// The parser may return a partial tree. Use available structure to retain
+	// shell precedence, including commands whose syntax Bash will reject.
 	explicit := known || shellStructure(file) || strings.ContainsAny(input, "|;&<>$`\n") || strings.ContainsAny(first, "/=")
 	if syntax.IsIncomplete(err) && explicit {
 		return Decision{Incomplete, "unfinished shell syntax"}
@@ -64,6 +74,8 @@ func (r Router) Route(input string) Decision {
 	return Decision{Ambiguous, "requires model classification"}
 }
 
+// shellStructure identifies compound syntax, redirections and assignments.
+// A lone ordinary call is resolved by command name or the classifier instead.
 func shellStructure(f *syntax.File) bool {
 	if f == nil {
 		return false
@@ -79,10 +91,14 @@ func shellStructure(f *syntax.File) bool {
 	return !ok || len(call.Assigns) > 0
 }
 
-// NeedsContinuation applies after the input is known (or forced) to be shell.
+// NeedsContinuation reports whether recognized or forced shell input needs
+// another line. Other parse errors are complete input for Bash to diagnose.
 func NeedsContinuation(input string) bool { _, err := parse(input); return syntax.IsIncomplete(err) }
 
-// Diagnose only exempts single, simple commands with a normal negative result.
+// Diagnose reports whether a user command's status needs automatic diagnosis.
+// Success, Ctrl-C (130), Ctrl-Z (148), and status 1 from a lone, simple
+// grep/diff/test/[ are exempt. Compound commands, assignments and redirections
+// do not receive the normal-negative exemption.
 func Diagnose(input string, code int) bool {
 	if code == 0 || code == 130 || code == 148 {
 		return false
@@ -91,6 +107,8 @@ func Diagnose(input string, code int) bool {
 		return true
 	}
 	f, err := parse(input)
+	// Be conservative when the failed input cannot be proved to be one simple
+	// command; a compound expression may fail for a different reason.
 	if err != nil || f == nil || len(f.Stmts) != 1 {
 		return true
 	}

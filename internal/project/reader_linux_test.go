@@ -7,6 +7,7 @@ import (
 	"testing"
 )
 
+// fixture pins an isolated project root and closes its descriptor after the test.
 func fixture(t *testing.T) *Reader {
 	t.Helper()
 	root := t.TempDir()
@@ -30,6 +31,9 @@ func put(t *testing.T, r *Reader, path, content string) {
 		t.Fatal(err)
 	}
 }
+
+// TestScopeAndExclusions checks sensitive paths, traversal, binary/key contents
+// and symlink targets while allowing ordinary files and safe in-project links.
 func TestScopeAndExclusions(t *testing.T) {
 	r := fixture(t)
 	put(t, r, "src/main.go", "package main\n")
@@ -79,6 +83,9 @@ func TestScopeAndExclusions(t *testing.T) {
 		t.Fatal("nearest Git root not found")
 	}
 }
+
+// TestGitignoreAndSymlinkTarget checks nested ignore rules and negation, applies
+// exclusions to link targets, and fails closed on an unsafe ignore file.
 func TestGitignoreAndSymlinkTarget(t *testing.T) {
 	r := fixture(t)
 	put(t, r, ".gitignore", "*.log\nignored/\n!keep.log\n")
@@ -114,6 +121,9 @@ func TestGitignoreAndSymlinkTarget(t *testing.T) {
 		t.Fatal("unsafe .gitignore allowed")
 	}
 }
+
+// TestBudgetsAndSpecialFiles checks per-read truncation, task-wide accounting,
+// budget reset and truncation at a multibyte UTF-8 boundary.
 func TestBudgetsAndSpecialFiles(t *testing.T) {
 	r := fixture(t)
 	put(t, r, "large.txt", strings.Repeat("a", FileLimit+20))
@@ -139,6 +149,8 @@ func TestBudgetsAndSpecialFiles(t *testing.T) {
 	}
 }
 
+// TestCloseIsIdempotent checks that explicit closure and fixture cleanup may
+// safely share responsibility for the root descriptor.
 func TestCloseIsIdempotent(t *testing.T) {
 	r := fixture(t)
 	if err := r.Close(); err != nil {

@@ -30,6 +30,8 @@ type FunctionCall struct {
 }
 
 // Message is a Chat Completions conversation message or tool result.
+// A tool result uses ToolCallID to match an assistant call. File and command
+// contents belong in tool messages rather than user or system instructions.
 type Message struct {
 	Role       string     `json:"role"`
 	Content    string     `json:"content,omitempty"`
@@ -53,6 +55,8 @@ type ToolDefinition struct {
 // Client returns a complete assistant decision or an error. Implementations
 // must respect context cancellation; they do not execute tools.
 type Client interface {
+	// Complete returns one assistant decision without invoking any tools.
+	// The caller owns the conversation and must not mutate it during the call.
 	Complete(context.Context, []Message, []Tool) (Message, error)
 }
 
@@ -64,6 +68,7 @@ type HTTPClient struct {
 }
 
 // New constructs a client using the configured request timeout.
+// The caller supplies a validated config, normally obtained from config.Load.
 func New(cfg config.Config) *HTTPClient {
 	return &HTTPClient{
 		config: cfg,
@@ -78,10 +83,16 @@ func New(cfg config.Config) *HTTPClient {
 // details out of the terminal's error message.
 type requestError struct{ cause error }
 
+// Error returns a terminal-safe summary of the transport failure.
 func (e *requestError) Error() string { return "model request failed or was canceled" }
+
+// Unwrap preserves the original cause for errors.Is and errors.As.
 func (e *requestError) Unwrap() error { return e.cause }
 
 // Complete sends one bounded, non-streaming Chat Completions request.
+// It makes no application-level retry and follows no redirects. Successful
+// responses are capped at 1 MiB and must contain exactly one finished assistant
+// message. An empty tools slice requests an ordinary text response.
 func (c *HTTPClient) Complete(ctx context.Context, messages []Message, tools []Tool) (Message, error) {
 	if !c.config.Ready() {
 		return Message{}, errors.New("model is not configured; use :sh or configure base_url and model")
@@ -96,6 +107,8 @@ func (c *HTTPClient) Complete(ctx context.Context, messages []Message, tools []T
 	if len(tools) > 0 {
 		body.ToolChoice = "auto"
 	}
+	// The zero Parallel field is deliberately encoded as false: execution
+	// authority is granted one command at a time by the Agent.
 	data, err := json.Marshal(body)
 	if err != nil {
 		return Message{}, err
@@ -148,6 +161,8 @@ func (c *HTTPClient) Complete(ctx context.Context, messages []Message, tools []T
 }
 
 // Classify asks the model to return shell or agent without rewriting input.
+// Tool calls, unknown fields, extra JSON values and all other classifications
+// are rejected; classification alone never authorizes command execution.
 func Classify(ctx context.Context, c Client, input string) (string, error) {
 	m, err := c.Complete(ctx, []Message{{Role: "system", Content: `Classify the user's input as a shell command (including misspelled commands) or a natural-language task. Ambiguous requests such as "find large files" are tasks. Return only {"kind":"shell"} or {"kind":"agent"}. Do not rewrite input or call tools.`}, {Role: "user", Content: input}}, nil)
 	if err != nil {
