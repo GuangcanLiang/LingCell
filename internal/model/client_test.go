@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -81,8 +82,8 @@ func TestCancellationAndNoRedirect(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	if _, err := c.Complete(ctx, []Message{{Role: "user", Content: "test"}}, nil); err == nil {
-		t.Fatal("timeout was ignored")
+	if _, err := c.Complete(ctx, []Message{{Role: "user", Content: "test"}}, nil); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("timeout cause was lost: %v", err)
 	}
 	if time.Since(start) > time.Second {
 		t.Fatal("request was not canceled")

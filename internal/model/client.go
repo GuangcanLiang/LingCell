@@ -16,41 +16,72 @@ import (
 	"lingcell/internal/config"
 )
 
+// ToolCall describes an assistant's requested function invocation.
 type ToolCall struct {
 	ID       string       `json:"id"`
 	Type     string       `json:"type"`
 	Function FunctionCall `json:"function"`
 }
+
+// FunctionCall contains a tool name and its JSON-encoded arguments.
 type FunctionCall struct {
 	Name      string `json:"name"`
 	Arguments string `json:"arguments"`
 }
+
+// Message is a Chat Completions conversation message or tool result.
 type Message struct {
 	Role       string     `json:"role"`
 	Content    string     `json:"content,omitempty"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
 }
+
+// Tool advertises an available function to the model service.
 type Tool struct {
 	Type     string         `json:"type"`
 	Function ToolDefinition `json:"function"`
 }
+
+// ToolDefinition describes a tool and its JSON Schema parameters.
 type ToolDefinition struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Parameters  any    `json:"parameters"`
 }
+
+// Client returns a complete assistant decision or an error. Implementations
+// must respect context cancellation; they do not execute tools.
 type Client interface {
 	Complete(context.Context, []Message, []Tool) (Message, error)
 }
+
+// HTTPClient talks to a configured service without following redirects.
+// It can be shared by callers; credentials are read from the configured env var.
 type HTTPClient struct {
 	config config.Config
 	http   *http.Client
 }
 
+// New constructs a client using the configured request timeout.
 func New(cfg config.Config) *HTTPClient {
-	return &HTTPClient{cfg, &http.Client{Timeout: time.Duration(cfg.TimeoutSeconds) * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	return &HTTPClient{
+		config: cfg,
+		http: &http.Client{
+			Timeout:       time.Duration(cfg.TimeoutSeconds) * time.Second,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
+	}
 }
+
+// requestError preserves error identity while keeping URLs and transport
+// details out of the terminal's error message.
+type requestError struct{ cause error }
+
+func (e *requestError) Error() string { return "model request failed or was canceled" }
+func (e *requestError) Unwrap() error { return e.cause }
+
+// Complete sends one bounded, non-streaming Chat Completions request.
 func (c *HTTPClient) Complete(ctx context.Context, messages []Message, tools []Tool) (Message, error) {
 	if !c.config.Ready() {
 		return Message{}, errors.New("model is not configured; use :sh or configure base_url and model")
@@ -79,7 +110,7 @@ func (c *HTTPClient) Complete(ctx context.Context, messages []Message, tools []T
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return Message{}, errors.New("model request failed or was canceled")
+		return Message{}, &requestError{cause: err}
 	}
 	defer resp.Body.Close()
 	// Never print remote error bodies: they may echo credentials or request data.
@@ -116,6 +147,7 @@ func (c *HTTPClient) Complete(ctx context.Context, messages []Message, tools []T
 	return m, nil
 }
 
+// Classify asks the model to return shell or agent without rewriting input.
 func Classify(ctx context.Context, c Client, input string) (string, error) {
 	m, err := c.Complete(ctx, []Message{{Role: "system", Content: `Classify the user's input as a shell command (including misspelled commands) or a natural-language task. Ambiguous requests such as "find large files" are tasks. Return only {"kind":"shell"} or {"kind":"agent"}. Do not rewrite input or call tools.`}, {Role: "user", Content: input}}, nil)
 	if err != nil {

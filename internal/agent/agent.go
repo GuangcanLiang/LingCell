@@ -15,15 +15,22 @@ import (
 	"lingcell/internal/shell"
 )
 
+// ShellSession is the persistent shell capability consumed by the Agent.
 type ShellSession interface {
 	Run(context.Context, string) (shell.Result, error)
 	Cwd() string
 }
+
+// ProjectReader reads only the fixed project scope using one task's budget.
 type ProjectReader interface {
 	ListFiles(string) (project.Data, error)
 	ReadFile(string) (project.Data, error)
 }
+
+// Confirm grants authority for exactly the displayed command. False ends the task.
 type Confirm func(command, cwd, purpose string) (bool, error)
+
+// Agent owns a bounded decision loop. An Agent runs one task at a time.
 type Agent struct {
 	Model        model.Client
 	Shell        ShellSession
@@ -34,11 +41,14 @@ type Agent struct {
 	Timeout      time.Duration
 }
 
+// ErrDeclined reports that the user rejected a command and ended the task.
 var ErrDeclined = errors.New("command declined; task ended")
 
 func tool(name, description string, properties map[string]any, required []string) model.Tool {
 	return model.Tool{Type: "function", Function: model.ToolDefinition{Name: name, Description: description, Parameters: map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false}}}
 }
+
+// Tools returns the only capabilities available to the model.
 func Tools() []model.Tool {
 	text := map[string]any{"type": "string"}
 	return []model.Tool{
@@ -94,6 +104,7 @@ func validate(call model.ToolCall) error {
 	return nil
 }
 
+// Run investigates a request and executes commands only after confirmation.
 // An optional prior result is the user's already-executed shell command. It is
 // added as a tool result, never promoted into the user's instructions.
 func (a *Agent) Run(ctx context.Context, request string, root string, previous ...shell.Result) error {
@@ -150,7 +161,9 @@ func (a *Agent) Run(ctx context.Context, request string, root string, previous .
 			return errors.New("model proposed multiple commands; no commands were executed")
 		}
 		if next.Content != "" {
-			fmt.Fprintln(a.Output, next.Content)
+			if _, err := fmt.Fprintln(a.Output, next.Content); err != nil {
+				return fmt.Errorf("write model response: %w", err)
+			}
 		}
 		if len(next.ToolCalls) == 0 {
 			return nil
@@ -172,7 +185,10 @@ func (a *Agent) Run(ctx context.Context, request string, root string, previous .
 			if err != nil {
 				data = map[string]string{"error": err.Error()}
 			}
-			encoded, _ := json.Marshal(data)
+			encoded, err := json.Marshal(data)
+			if err != nil {
+				return fmt.Errorf("encode tool result: %w", err)
+			}
 			messages = append(messages, model.Message{Role: "tool", Content: string(encoded), ToolCallID: call.ID})
 		}
 	}
@@ -184,7 +200,9 @@ func (a *Agent) execute(ctx context.Context, call model.ToolCall) (any, error) {
 		var args struct {
 			Path string `json:"path"`
 		}
-		_ = decode(call.Function.Arguments, &args)
+		if err := decode(call.Function.Arguments, &args); err != nil {
+			return nil, err
+		}
 		if call.Function.Name == "list_files" {
 			return a.Reader.ListFiles(args.Path)
 		}
@@ -194,7 +212,9 @@ func (a *Agent) execute(ctx context.Context, call model.ToolCall) (any, error) {
 			Command string `json:"command"`
 			Purpose string `json:"purpose"`
 		}
-		_ = decode(call.Function.Arguments, &args)
+		if err := decode(call.Function.Arguments, &args); err != nil {
+			return nil, err
+		}
 		if a.Confirm == nil {
 			return nil, errors.New("confirmation is unavailable")
 		}

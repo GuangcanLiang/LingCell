@@ -138,3 +138,13 @@ func TestBudgetsAndSpecialFiles(t *testing.T) {
 		t.Fatalf("UTF-8 boundary: %+v %v", data, err)
 	}
 }
+
+func TestCloseIsIdempotent(t *testing.T) {
+	r := fixture(t)
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+}

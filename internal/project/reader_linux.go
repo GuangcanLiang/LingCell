@@ -9,29 +9,42 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	gitignore "github.com/denormal/go-gitignore"
 	"golang.org/x/sys/unix"
 )
 
+// FileLimit bounds one returned file or directory listing, in bytes.
 const FileLimit = 32 * 1024
+
+// TaskLimit bounds the total content returned for one Agent task, in bytes.
 const TaskLimit = 256 * 1024
 
+// Reader owns a directory descriptor for a fixed, canonical project root.
+// Call Close after the last task; closing concurrently with reads is unsupported.
 type Reader struct {
-	Root string
-	fd   int
+	Root      string
+	fd        int
+	closeOnce sync.Once
+	closeErr  error
 }
+
+// Task tracks one task's read budget. A Task must not be shared by goroutines.
 type Task struct {
 	reader *Reader
 	used   int
 }
+
+// Data is bounded text returned to the model, with an explicit truncation flag.
 type Data struct {
 	Path      string `json:"path"`
 	Content   string `json:"content"`
 	Truncated bool   `json:"truncated"`
 }
 
+// New fixes the reading scope to the nearest Git root, or start without Git.
 func New(start string) (*Reader, error) {
 	root, err := filepath.Abs(start)
 	if err != nil {
@@ -54,9 +67,16 @@ func New(start string) (*Reader, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Reader{root, fd}, nil
+	return &Reader{Root: root, fd: fd}, nil
 }
-func (r *Reader) Close() error   { return unix.Close(r.fd) }
+
+// Close releases the root descriptor. Repeated calls return the first result.
+func (r *Reader) Close() error {
+	r.closeOnce.Do(func() { r.closeErr = unix.Close(r.fd) })
+	return r.closeErr
+}
+
+// NewTask creates an independent reading budget for an Agent task.
 func (r *Reader) NewTask() *Task { return &Task{reader: r} }
 
 func excluded(rel string) bool {
@@ -190,8 +210,10 @@ func (t *Task) finish(path, content string, truncated bool) (Data, error) {
 	for !utf8.ValidString(content) && len(content) > 0 {
 		content = content[:len(content)-1]
 	}
-	return Data{path, content, truncated}, nil
+	return Data{Path: path, Content: content, Truncated: truncated}, nil
 }
+
+// ReadFile reads an allowed UTF-8 regular file relative to the fixed root.
 func (t *Task) ReadFile(path string) (Data, error) {
 	rel, err := t.reader.checked(path)
 	if err != nil {
@@ -231,6 +253,8 @@ func (t *Task) ReadFile(path string) (Data, error) {
 	}
 	return t.finish(path, string(b), truncated)
 }
+
+// ListFiles lists at most 256 allowed entries in a project-relative directory.
 func (t *Task) ListFiles(path string) (Data, error) {
 	rel, err := t.reader.checked(path)
 	if err != nil {

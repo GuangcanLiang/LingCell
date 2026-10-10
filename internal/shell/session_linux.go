@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -21,8 +22,10 @@ import (
 	"golang.org/x/term"
 )
 
+// OutputLimit caps captured command output; live PTY output is not truncated.
 const OutputLimit = 64 * 1024
 
+// Result contains the command status and merged PTY output for a completed run.
 type Result struct {
 	Command   string `json:"command"`
 	ExitCode  int    `json:"exit_code"`
@@ -31,6 +34,8 @@ type Result struct {
 	Truncated bool   `json:"truncated"`
 }
 
+// Options configures a session. Nil Output discards live output; nil Input
+// disables terminal input forwarding. RCFile overrides ~/.bashrc for tests.
 type Options struct {
 	Dir, RCFile string
 	Output      io.Writer
@@ -43,6 +48,10 @@ type event struct {
 	path  string
 	err   error
 }
+
+// Session owns a Bash process and its terminal/control descriptors.
+// Run calls are serialized. Cwd, Names and Knows can be queried concurrently.
+// Close is idempotent and may interrupt an active Run.
 type Session struct {
 	cmd                         *exec.Cmd
 	terminal, control, commands *os.File
@@ -62,7 +71,8 @@ type Session struct {
 	closeOnce                   sync.Once
 }
 
-// RCFile is optional and intended for isolated tests. Normally ~/.bashrc is sourced.
+// Start launches an interactive Bash and waits for its startup control event.
+// The caller owns the returned session and must close it.
 func Start(ctx context.Context, opts Options) (*Session, error) {
 	rc := opts.RCFile
 	if rc == "" {
@@ -82,7 +92,9 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 		startup.Close()
 		return nil, err
 	}
-	startup.Close()
+	if err := startup.Close(); err != nil {
+		return nil, fmt.Errorf("close Bash startup file: %w", err)
+	}
 	cr, cw, err := os.Pipe()
 	if err != nil {
 		return nil, err
@@ -110,6 +122,18 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 	}
 	s := &Session{cmd: cmd, terminal: tty, control: cr, commands: qw, events: make(chan event, 8), done: make(chan struct{}), stopped: make(chan struct{}), output: opts.Output, input: opts.Input}
 	s.ttyFD, s.controlFD = int(tty.Fd()), int(cr.Fd())
+	// Configure nonblocking reads before starting the polling goroutine. A failed
+	// setup must not leave a reader blocked indefinitely while Close waits for it.
+	for _, fd := range []int{s.ttyFD, s.controlFD} {
+		if err := unix.SetNonblock(fd, true); err != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			_ = tty.Close()
+			_ = cr.Close()
+			_ = qw.Close()
+			return nil, fmt.Errorf("configure shell descriptor: %w", err)
+		}
+	}
 	go func() { _ = cmd.Wait(); close(s.done) }()
 	go s.pump()
 	select {
@@ -149,6 +173,7 @@ set +o emacs +o vi
 stty -echo
 `
 
+// Quote returns a single literal Bash word, escaping embedded single quotes.
 func Quote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
 
 func (s *Session) update(ev event) {
@@ -158,12 +183,22 @@ func (s *Session) update(ev event) {
 	s.names = ev.names
 	s.path = ev.path
 }
-func (s *Session) Cwd() string { s.mu.Lock(); defer s.mu.Unlock(); return s.cwd }
+
+// Cwd returns the physical working directory reported by Bash.
+func (s *Session) Cwd() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cwd
+}
+
+// Names returns a snapshot of Bash's builtin, keyword, alias and function names.
 func (s *Session) Names() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.names...)
 }
+
+// Knows resolves Bash names and executable files in the current shell PATH.
 func (s *Session) Knows(name string) bool {
 	for _, n := range s.Names() {
 		if n == name {
@@ -187,6 +222,8 @@ func (s *Session) Knows(name string) bool {
 	}
 	return false
 }
+
+// Done closes when the Bash process exits.
 func (s *Session) Done() <-chan struct{} { return s.done }
 
 // pump reads both descriptors in one goroutine. Before publishing a control event
@@ -194,8 +231,6 @@ func (s *Session) Done() <-chan struct{} { return s.done }
 func (s *Session) pump() {
 	defer close(s.stopped)
 	tfd, cfd := s.ttyFD, s.controlFD
-	_ = unix.SetNonblock(tfd, true)
-	_ = unix.SetNonblock(cfd, true)
 	var pending []byte
 	buf := make([]byte, 8192)
 	drain := func() {
@@ -276,6 +311,9 @@ func (s *Session) publish(ev event) {
 	}
 }
 
+// Run executes one command at Bash's top level without replaying on failure.
+// Cancellation interrupts the foreground process group; an acknowledged
+// interrupt returns its exit code, while an unresponsive session is closed.
 func (s *Session) Run(ctx context.Context, command string) (Result, error) {
 	s.runMu.Lock()
 	defer s.runMu.Unlock()
@@ -355,6 +393,7 @@ func (s *Session) Run(ctx context.Context, command string) (Result, error) {
 	return result, nil
 }
 
+// CancelForeground sends SIGINT to the PTY's current foreground process group.
 func (s *Session) CancelForeground() {
 	pgid, err := unix.IoctlGetInt(s.ttyFD, unix.TIOCGPGRP)
 	if err == nil && pgid > 0 {
@@ -362,6 +401,7 @@ func (s *Session) CancelForeground() {
 	}
 }
 
+// Resize copies the input terminal's dimensions to the PTY when available.
 func (s *Session) Resize() {
 	if s.input != nil {
 		if size, err := unix.IoctlGetWinsize(int(s.input.Fd()), unix.TIOCGWINSZ); err == nil {
@@ -415,6 +455,7 @@ func (s *Session) forwardInput() (func(), error) {
 	return func() { close(stop); <-ended; signal.Stop(resize); _ = term.Restore(fd, state) }, nil
 }
 
+// Close stops Bash, waits for its reader goroutine and releases all descriptors.
 func (s *Session) Close() {
 	s.closeOnce.Do(func() {
 		if pgid, err := unix.IoctlGetInt(s.ttyFD, unix.TIOCGPGRP); err == nil && pgid > 0 && pgid != s.cmd.Process.Pid {

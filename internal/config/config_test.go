@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -25,6 +26,18 @@ func TestConfiguration(t *testing.T) {
 		}
 		if _, err := Load(path); err == nil {
 			t.Errorf("invalid config accepted: %s", data)
+		}
+	}
+}
+
+func TestRejectOversizedAndNullConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	for _, data := range []string{"null", "{}" + strings.Repeat(" ", maxConfigSize) + "{}"} {
+		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil {
+			t.Fatal("accepted a truncated or non-object config")
 		}
 	}
 }

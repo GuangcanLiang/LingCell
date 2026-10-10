@@ -11,13 +11,13 @@ import (
 	"sync"
 	"syscall"
 
+	"golang.org/x/term"
+
 	"lingcell/internal/app"
 	"lingcell/internal/config"
 	"lingcell/internal/model"
 	"lingcell/internal/project"
 	"lingcell/internal/shell"
-
-	"golang.org/x/term"
 )
 
 func main() { os.Exit(run()) }
@@ -99,7 +99,11 @@ func run() int {
 		previous := taskCancel
 		taskCancel = cancel
 		mu.Unlock()
-		return func() { mu.Lock(); taskCancel = previous; mu.Unlock() }
+		return func() {
+			mu.Lock()
+			taskCancel = previous
+			mu.Unlock()
+		}
 	}
 	if err := a.Init(*noHistory); err != nil {
 		fmt.Fprintln(os.Stderr, err)

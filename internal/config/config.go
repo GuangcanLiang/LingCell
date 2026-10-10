@@ -1,6 +1,8 @@
+// Package config loads and validates LingCell's local JSON configuration.
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +13,10 @@ import (
 	"strings"
 )
 
+const maxConfigSize = 64 * 1024
+
+// Config selects the model service, request limits and input-history location.
+// APIKeyEnv names an environment variable; it never stores a credential value.
 type Config struct {
 	BaseURL        string `json:"base_url"`
 	Model          string `json:"model"`
@@ -20,6 +26,7 @@ type Config struct {
 	HistoryFile    string `json:"history_file"`
 }
 
+// DefaultPath returns the configuration path in the user's config directory.
 func DefaultPath() string {
 	d, err := os.UserConfigDir()
 	if err != nil {
@@ -27,6 +34,9 @@ func DefaultPath() string {
 	}
 	return filepath.Join(d, "lingcell", "config.json")
 }
+
+// Load reads one JSON object, applying defaults to omitted fields.
+// A missing file returns defaults so Bash can run without a model service.
 func Load(path string) (Config, error) {
 	cfg := Config{MaxDecisions: 8, TimeoutSeconds: 60, APIKeyEnv: "LINGCELL_API_KEY"}
 	d, err := os.UserCacheDir()
@@ -41,7 +51,18 @@ func Load(path string) (Config, error) {
 		return cfg, err
 	}
 	defer f.Close()
-	dec := json.NewDecoder(io.LimitReader(f, 64*1024))
+	data, err := io.ReadAll(io.LimitReader(f, maxConfigSize+1))
+	if err != nil {
+		return cfg, fmt.Errorf("read config: %w", err)
+	}
+	if len(data) > maxConfigSize {
+		return cfg, errors.New("config exceeds 64 KiB")
+	}
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return cfg, errors.New("config must contain one JSON object")
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&cfg); err != nil {
 		return cfg, fmt.Errorf("config: %w", err)
@@ -64,6 +85,8 @@ func Load(path string) (Config, error) {
 	}
 	return cfg, nil
 }
+
+// Ready reports whether the model endpoint and model name are configured.
 func (c Config) Ready() bool {
 	return strings.TrimSpace(c.BaseURL) != "" && strings.TrimSpace(c.Model) != ""
 }

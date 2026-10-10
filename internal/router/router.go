@@ -8,6 +8,7 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 )
 
+// Kind selects the shell, Agent, classifier or continuation input path.
 type Kind string
 
 const (
@@ -17,16 +18,20 @@ const (
 	Incomplete Kind = "incomplete"
 )
 
+// Decision is a route with a human-readable explanation.
 type Decision struct {
 	Kind   Kind
 	Reason string
 }
+
+// Router applies local rules using the current Bash command-name resolver.
 type Router struct{ Knows func(string) bool }
 
 func parse(input string) (*syntax.File, error) {
 	return syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(input), "")
 }
 
+// Route classifies input without expanding or executing shell expressions.
 func (r Router) Route(input string) Decision {
 	input = strings.TrimSpace(input)
 	if input == "" {

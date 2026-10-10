@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,24 @@ type mockModel struct {
 	replies  []model.Message
 	requests [][]model.Message
 	wait     bool
+}
+
+type failingOutput struct{}
+
+func (failingOutput) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+func TestOutputFailureStopsBeforeConfirmation(t *testing.T) {
+	next := call("1", "run_command", `{"command":"touch marker","purpose":"test"}`)
+	next.Content = "proposal"
+	s := &mockShell{}
+	confirmed := false
+	a := Agent{Model: &mockModel{replies: []model.Message{next}}, Shell: s, Reader: &mockReader{}, Output: failingOutput{}, Confirm: func(string, string, string) (bool, error) { confirmed = true; return true, nil }}
+	if err := a.Run(context.Background(), "test", "/project"); !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("output failure: %v", err)
+	}
+	if confirmed || len(s.commands) != 0 {
+		t.Fatal("proceeded after failing to display the proposal")
+	}
 }
 
 func (m *mockModel) Complete(ctx context.Context, msg []model.Message, _ []model.Tool) (model.Message, error) {
