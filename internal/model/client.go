@@ -1,0 +1,140 @@
+// Package model implements the tool-calling Chat Completions wire protocol.
+package model
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+
+	"lingcell/internal/config"
+)
+
+type ToolCall struct {
+	ID       string       `json:"id"`
+	Type     string       `json:"type"`
+	Function FunctionCall `json:"function"`
+}
+type FunctionCall struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+type Message struct {
+	Role       string     `json:"role"`
+	Content    string     `json:"content,omitempty"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+}
+type Tool struct {
+	Type     string         `json:"type"`
+	Function ToolDefinition `json:"function"`
+}
+type ToolDefinition struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Parameters  any    `json:"parameters"`
+}
+type Client interface {
+	Complete(context.Context, []Message, []Tool) (Message, error)
+}
+type HTTPClient struct {
+	config config.Config
+	http   *http.Client
+}
+
+func New(cfg config.Config) *HTTPClient {
+	return &HTTPClient{cfg, &http.Client{Timeout: time.Duration(cfg.TimeoutSeconds) * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+}
+func (c *HTTPClient) Complete(ctx context.Context, messages []Message, tools []Tool) (Message, error) {
+	if !c.config.Ready() {
+		return Message{}, errors.New("model is not configured; use :sh or configure base_url and model")
+	}
+	body := struct {
+		Model      string    `json:"model"`
+		Messages   []Message `json:"messages"`
+		Tools      []Tool    `json:"tools,omitempty"`
+		ToolChoice string    `json:"tool_choice,omitempty"`
+		Parallel   bool      `json:"parallel_tool_calls"`
+	}{Model: c.config.Model, Messages: messages, Tools: tools}
+	if len(tools) > 0 {
+		body.ToolChoice = "auto"
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return Message{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.config.BaseURL, "/")+"/chat/completions", bytes.NewReader(data))
+	if err != nil {
+		return Message{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if key := os.Getenv(c.config.APIKeyEnv); key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return Message{}, errors.New("model request failed or was canceled")
+	}
+	defer resp.Body.Close()
+	// Never print remote error bodies: they may echo credentials or request data.
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return Message{}, fmt.Errorf("model service returned HTTP %d", resp.StatusCode)
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024+1))
+	if err != nil {
+		return Message{}, err
+	}
+	if len(b) > 1024*1024 {
+		return Message{}, errors.New("model response exceeds 1 MiB")
+	}
+	var result struct {
+		Choices []struct {
+			Message      Message `json:"message"`
+			FinishReason string  `json:"finish_reason"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(b, &result); err != nil {
+		return Message{}, errors.New("invalid model JSON response")
+	}
+	if len(result.Choices) != 1 {
+		return Message{}, errors.New("expected exactly one model response")
+	}
+	choice := result.Choices[0]
+	if choice.FinishReason != "stop" && choice.FinishReason != "tool_calls" {
+		return Message{}, errors.New("model response did not finish normally")
+	}
+	m := choice.Message
+	if m.Role != "assistant" || (m.Content == "" && len(m.ToolCalls) == 0) {
+		return Message{}, errors.New("invalid assistant response")
+	}
+	return m, nil
+}
+
+func Classify(ctx context.Context, c Client, input string) (string, error) {
+	m, err := c.Complete(ctx, []Message{{Role: "system", Content: `Classify the user's input as a shell command (including misspelled commands) or a natural-language task. Ambiguous requests such as "find large files" are tasks. Return only {"kind":"shell"} or {"kind":"agent"}. Do not rewrite input or call tools.`}, {Role: "user", Content: input}}, nil)
+	if err != nil {
+		return "", err
+	}
+	if len(m.ToolCalls) > 0 {
+		return "", errors.New("classification returned unexpected tools")
+	}
+	var result struct {
+		Kind string `json:"kind"`
+	}
+	dec := json.NewDecoder(strings.NewReader(m.Content))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&result); err != nil {
+		return "", errors.New("invalid model classification")
+	}
+	var extra any
+	if dec.Decode(&extra) != io.EOF || (result.Kind != "shell" && result.Kind != "agent") {
+		return "", errors.New("invalid model classification")
+	}
+	return result.Kind, nil
+}
