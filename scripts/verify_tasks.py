@@ -42,6 +42,8 @@ class TaskModel(MockModel):
 
     def do_POST(self):
         try:
+            # The fixture must not inherit a credential from the parent shell.
+            assert "Authorization" not in self.headers, "mock received an unexpected credential header"
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             self.requests.append(body)
             request_index = len(self.requests) - 1
@@ -184,7 +186,7 @@ def verify(binary):
             (root / "verify-fail.sh").write_text("printf 'TASK_FAILURE_EVIDENCE\\n'\nexit 7\n")
             os.mkfifo(root / "fifo", 0o600)
             config = root / "config.json"
-            config.write_text(json.dumps({"base_url": f"http://127.0.0.1:{server.server_port}/v1", "model": "mock-task", "timeout_seconds": 5}))
+            config.write_text(json.dumps({"base_url": f"http://127.0.0.1:{server.server_port}/v1", "model": "mock-task", "api_key_env": "", "timeout_seconds": 5}))
             tty = Terminal(binary, root, config)
             try:
                 tty.prompt()
