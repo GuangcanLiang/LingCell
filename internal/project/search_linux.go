@@ -309,6 +309,12 @@ func (t *Task) SearchText(ctx context.Context, path, query string) (SearchData, 
 // private-key checks cover the scanned prefix, including lines before the range.
 func (t *Task) ReadFileRange(ctx context.Context, path string, startLine, count int) (RangeData, error) {
 	result := RangeData{Path: path}
+	// Keep metadata bounded before any IO. Cleaned paths may be tiny while
+	// the caller's original spelling contains thousands of redundant './'.
+	metadata, _ := json.Marshal(result)
+	if len(path) > FileLimit/2 || len(metadata) > FileLimit-1024 {
+		return RangeData{}, errors.New("read_file_range path exceeds result budget")
+	}
 	if count == 0 {
 		count = 100
 	}
@@ -384,12 +390,18 @@ func (t *Task) ReadFileRange(ctx context.Context, path string, startLine, count 
 	}
 	// JSON escaping and metadata also count toward the new tools' return cap.
 	for {
+		if err := ctx.Err(); err != nil {
+			return RangeData{}, err
+		}
 		encoded, _ := json.Marshal(result)
 		if len(encoded) <= FileLimit {
 			break
 		}
 		result.Truncated = true
 		addLimit(&result.Limits, "return_limit")
+		if len(result.Content) == 0 {
+			return RangeData{}, errors.New("read_file_range metadata exceeds result budget")
+		}
 		remove := max(1, (len(encoded)-FileLimit)/6)
 		result.Content = result.Content[:max(0, len(result.Content)-remove)]
 	}

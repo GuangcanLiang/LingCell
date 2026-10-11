@@ -241,3 +241,18 @@ func TestCancellationDuringScan(t *testing.T) {
 		}
 	}
 }
+
+// TestRangeOversizedMetadata rejects a long original spelling even when Clean
+// reduces it to a valid short path; trimming content alone cannot bound it.
+func TestRangeOversizedMetadata(t *testing.T) {
+	r := fixture(t)
+	put(t, r, "file", "ok\n")
+	task := r.NewTask()
+	path := strings.Repeat("./", 17000) + "file"
+	if _, err := task.ReadFileRange(context.Background(), path, 1, 1); err == nil || !strings.Contains(err.Error(), "result budget") {
+		t.Fatalf("oversized metadata: %v", err)
+	}
+	if task.scanned != 0 || task.used != 0 {
+		t.Fatal("invalid metadata consumed scan/return budgets")
+	}
+}
