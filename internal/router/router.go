@@ -37,8 +37,9 @@ func parse(input string) (*syntax.File, error) {
 }
 
 // Route classifies input without expanding or executing shell expressions.
-// Known Bash names and explicit shell structure take precedence over language
-// heuristics. Unknown input may need model classification, even after a parse
+// Known Bash names take precedence over language heuristics. Clear requests
+// with unknown first words precede punctuation-based shell rules. Unknown input
+// may need model classification, even after a parse
 // error; recognized shell syntax errors are left for Bash to report.
 func (r Router) Route(input string) Decision {
 	input = strings.TrimSpace(input)
@@ -47,10 +48,15 @@ func (r Router) Route(input string) Decision {
 	}
 	first := strings.Fields(input)[0]
 	known := r.Knows != nil && r.Knows(first)
+	// Requests often quote shell expressions. Their punctuation must not grant
+	// execution authority, while paths and assignments remain explicit shell.
+	if !known && !strings.ContainsAny(first, "/=") && requestPrefix(input) {
+		return Decision{Agent, "natural language request"}
+	}
 	file, err := parse(input)
 	// The parser may return a partial tree. Use available structure to retain
 	// shell precedence, including commands whose syntax Bash will reject.
-	explicit := known || shellStructure(file) || strings.ContainsAny(input, "|;&<>$`\n") || strings.ContainsAny(first, "/=")
+	explicit := known || shellStructure(file) || strings.ContainsAny(input, "|;&<>\n") || strings.ContainsAny(first, "/=")
 	if syntax.IsIncomplete(err) && explicit {
 		return Decision{Incomplete, "unfinished shell syntax"}
 	}
@@ -64,14 +70,18 @@ func (r Router) Route(input string) Decision {
 				return Decision{Agent, "natural language"}
 			}
 		}
-		lower := strings.ToLower(input)
-		for _, p := range []string{"please ", "help me ", "how do ", "how can ", "why ", "can you ", "could you "} {
-			if strings.HasPrefix(lower, p) {
-				return Decision{Agent, "natural language"}
-			}
-		}
 	}
 	return Decision{Ambiguous, "requires model classification"}
+}
+
+func requestPrefix(input string) bool {
+	lower := strings.ToLower(input)
+	for _, p := range []string{"please ", "help me ", "how do ", "how can ", "why ", "can you ", "could you ", "帮我", "请", "解释", "为什么", "如何", "能否", "可以帮"} {
+		if strings.HasPrefix(lower, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // shellStructure identifies compound syntax, redirections and assignments.

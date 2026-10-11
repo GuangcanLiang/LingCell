@@ -2,9 +2,11 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +15,34 @@ import (
 	"lingcell/internal/project"
 	"lingcell/internal/shell"
 )
+
+// TestRuntimeContext checks that each task gets current shell scope and only
+// the declared runtime facts, without uploading unrelated environment data.
+func TestRuntimeContext(t *testing.T) {
+	t.Setenv("LINGCELL_CONTEXT_SENTINEL", "private-environment-value")
+	m := &mockModel{replies: []model.Message{{Role: "assistant"}, {Role: "assistant"}}}
+	a := Agent{Model: m, Shell: &mockShell{}, Reader: &mockReader{}}
+	for _, root := range []string{"/fixed/project", "/another/root"} {
+		if err := a.Run(context.Background(), "explain $PATH", root); err != nil {
+			t.Fatal(err)
+		}
+		content := m.requests[len(m.requests)-1][1].Content
+		var initial struct {
+			Runtime runtimeContext `json:"runtime_context"`
+			Request string         `json:"request"`
+		}
+		if err := json.Unmarshal([]byte(content), &initial); err != nil {
+			t.Fatal(err)
+		}
+		c := initial.Runtime
+		if c.OS != "linux" || c.Architecture != runtime.GOARCH || c.Kernel == "" || c.Kernel == "unknown" || c.Cwd != "/project" || c.ProjectRoot != root || (c.Privilege != "root" && c.Privilege != "non_root") || initial.Request != "explain $PATH" {
+			t.Fatalf("invalid context: %+v", initial)
+		}
+		if !reflect.DeepEqual(c.Tools, []string{"list_files", "read_file", "run_command"}) || strings.Contains(content, "private-environment-value") || strings.Contains(content, "LINGCELL_CONTEXT_SENTINEL") {
+			t.Fatalf("unexpected runtime data: %s", content)
+		}
+	}
+}
 
 // mockModel records conversation snapshots and consumes one scripted reply per
 // request. The wait mode exercises cancellation without a network dependency.
