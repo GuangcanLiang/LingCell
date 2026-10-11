@@ -6,7 +6,7 @@
 
 ### 目标与改动
 
-第三批 `test/task-scenarios` / 独立worktree 使用 [固定场景](task-scenarios.md) 和 `scripts/verify_tasks.py`，通过本地模型与真实CLI/PTY验证同一Agent的项目理解、开发排障、模拟机器排障、经确认修改代码/差异/验证，另覆盖验证失败、边界和取消。Makefile terminal 保留三会话验收并追加任务场景；每场景输出决策/确认数，不保存私密原始内容。
+第三批 `test/task-scenarios` / 独立worktree 使用 [固定场景](task-scenarios.md) 和 `scripts/verify_tasks.py`，通过本地模型与真实CLI/PTY验证同一Agent的项目理解、开发排障、模拟机器排障、经确认修改代码/差异/验证，另覆盖验证失败、边界和取消。Makefile terminal 保留三会话验收并追加任务场景；同时修正初始上下文的注释，匹配其字符串与字符串列表字段（执行行为不变）。每场景输出决策/确认数，不保存私密原始内容。
 
 ### 验证状态与限制
 
