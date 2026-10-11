@@ -37,6 +37,24 @@ type ProjectReader interface {
 // end the task; the model's arguments never stand in for user approval.
 type Confirm func(command, cwd, purpose string) (bool, error)
 
+// Stage names an observable task phase. Notifications are synchronous.
+type Stage string
+
+// These stages precede the operation they describe.
+const (
+	WaitingModel        Stage = "waiting_model"
+	ReadingFiles        Stage = "reading_files"
+	WaitingConfirmation Stage = "waiting_confirmation"
+	ExecutingCommand    Stage = "executing_command"
+)
+
+// Progress carries decision counts without file contents or command output.
+type Progress struct {
+	Stage    Stage
+	Decision int
+	Limit    int
+}
+
 // Agent owns a bounded decision loop. An Agent runs one task at a time.
 // Model, Shell and Reader must be configured before Run. Each new task needs a
 // fresh ProjectReader budget. A nil Confirm rejects command execution.
@@ -46,6 +64,8 @@ type Agent struct {
 	Reader  ProjectReader
 	Confirm Confirm
 	Output  io.Writer // Nil discards explanatory model text.
+	// Notify runs before each phase. An error ends the task before that operation.
+	Notify func(Progress) error
 	// MaxDecisions counts model responses, not individual tool calls.
 	// Zero selects the default of 8.
 	MaxDecisions int
@@ -163,6 +183,9 @@ func (a *Agent) Run(ctx context.Context, request string, root string, previous .
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if err := a.notify(Progress{Stage: WaitingModel, Decision: i + 1, Limit: a.MaxDecisions}); err != nil {
+			return err
+		}
 		reqCtx, cancel := context.WithTimeout(ctx, a.Timeout)
 		next, err := a.Model.Complete(reqCtx, messages, Tools())
 		cancel()
@@ -203,6 +226,13 @@ func (a *Agent) Run(ctx context.Context, request string, root string, previous .
 		messages = append(messages, next)
 		for _, call := range next.ToolCalls {
 			if err := ctx.Err(); err != nil {
+				return err
+			}
+			stage := ReadingFiles
+			if call.Function.Name == "run_command" {
+				stage = WaitingConfirmation
+			}
+			if err := a.notify(Progress{Stage: stage, Decision: i + 1, Limit: a.MaxDecisions}); err != nil {
 				return err
 			}
 			data, err := a.execute(ctx, call)
@@ -266,6 +296,9 @@ func (a *Agent) execute(ctx context.Context, call model.ToolCall) (any, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		if err := a.notify(Progress{Stage: ExecutingCommand}); err != nil {
+			return nil, err
+		}
 		result, err := a.Shell.Run(ctx, args.Command)
 		// Interrupt and stop statuses represent user control, so they end this
 		// task rather than asking the model to repair or resume the job.
@@ -278,4 +311,12 @@ func (a *Agent) execute(ctx context.Context, call model.ToolCall) (any, error) {
 		return result, err
 	}
 	return nil, errors.New("unknown tool")
+}
+
+// notify propagates observer errors before the corresponding operation begins.
+func (a *Agent) notify(progress Progress) error {
+	if a.Notify != nil {
+		return a.Notify(progress)
+	}
+	return nil
 }

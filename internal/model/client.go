@@ -5,8 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -79,23 +77,13 @@ func New(cfg config.Config) *HTTPClient {
 	}
 }
 
-// requestError preserves error identity while keeping URLs and transport
-// details out of the terminal's error message.
-type requestError struct{ cause error }
-
-// Error returns a terminal-safe summary of the transport failure.
-func (e *requestError) Error() string { return "model request failed or was canceled" }
-
-// Unwrap preserves the original cause for errors.Is and errors.As.
-func (e *requestError) Unwrap() error { return e.cause }
-
 // Complete sends one bounded, non-streaming Chat Completions request.
 // It makes no application-level retry and follows no redirects. Successful
 // responses are capped at 1 MiB and must contain exactly one finished assistant
 // message. An empty tools slice requests an ordinary text response.
 func (c *HTTPClient) Complete(ctx context.Context, messages []Message, tools []Tool) (Message, error) {
 	if !c.config.Ready() {
-		return Message{}, errors.New("model is not configured; use :sh or configure base_url and model")
+		return Message{}, &Error{Kind: Configuration}
 	}
 	body := struct {
 		Model      string    `json:"model"`
@@ -111,11 +99,11 @@ func (c *HTTPClient) Complete(ctx context.Context, messages []Message, tools []T
 	// authority is granted one command at a time by the Agent.
 	data, err := json.Marshal(body)
 	if err != nil {
-		return Message{}, err
+		return Message{}, &Error{Kind: Protocol}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.config.BaseURL, "/")+"/chat/completions", bytes.NewReader(data))
 	if err != nil {
-		return Message{}, err
+		return Message{}, &Error{Kind: Protocol}
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if key := os.Getenv(c.config.APIKeyEnv); key != "" {
@@ -123,19 +111,19 @@ func (c *HTTPClient) Complete(ctx context.Context, messages []Message, tools []T
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return Message{}, &requestError{cause: err}
+		return Message{}, transportError(err)
 	}
 	defer resp.Body.Close()
 	// Never print remote error bodies: they may echo credentials or request data.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return Message{}, fmt.Errorf("model service returned HTTP %d", resp.StatusCode)
+		return Message{}, statusError(resp.StatusCode)
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024+1))
 	if err != nil {
-		return Message{}, err
+		return Message{}, transportError(err)
 	}
 	if len(b) > 1024*1024 {
-		return Message{}, errors.New("model response exceeds 1 MiB")
+		return Message{}, &Error{Kind: Protocol}
 	}
 	var result struct {
 		Choices []struct {
@@ -144,18 +132,18 @@ func (c *HTTPClient) Complete(ctx context.Context, messages []Message, tools []T
 		} `json:"choices"`
 	}
 	if err := json.Unmarshal(b, &result); err != nil {
-		return Message{}, errors.New("invalid model JSON response")
+		return Message{}, &Error{Kind: Protocol}
 	}
 	if len(result.Choices) != 1 {
-		return Message{}, errors.New("expected exactly one model response")
+		return Message{}, &Error{Kind: Protocol}
 	}
 	choice := result.Choices[0]
 	if choice.FinishReason != "stop" && choice.FinishReason != "tool_calls" {
-		return Message{}, errors.New("model response did not finish normally")
+		return Message{}, &Error{Kind: Protocol}
 	}
 	m := choice.Message
 	if m.Role != "assistant" || (m.Content == "" && len(m.ToolCalls) == 0) {
-		return Message{}, errors.New("invalid assistant response")
+		return Message{}, &Error{Kind: Protocol}
 	}
 	return m, nil
 }
@@ -169,7 +157,7 @@ func Classify(ctx context.Context, c Client, input string) (string, error) {
 		return "", err
 	}
 	if len(m.ToolCalls) > 0 {
-		return "", errors.New("classification returned unexpected tools")
+		return "", &Error{Kind: Protocol}
 	}
 	var result struct {
 		Kind string `json:"kind"`
@@ -177,11 +165,11 @@ func Classify(ctx context.Context, c Client, input string) (string, error) {
 	dec := json.NewDecoder(strings.NewReader(m.Content))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&result); err != nil {
-		return "", errors.New("invalid model classification")
+		return "", &Error{Kind: Protocol}
 	}
 	var extra any
 	if dec.Decode(&extra) != io.EOF || (result.Kind != "shell" && result.Kind != "agent") {
-		return "", errors.New("invalid model classification")
+		return "", &Error{Kind: Protocol}
 	}
 	return result.Kind, nil
 }

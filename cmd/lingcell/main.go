@@ -29,6 +29,7 @@ func main() { os.Exit(run()) }
 func run() int {
 	path := flag.String("config", config.DefaultPath(), "JSON configuration path")
 	noHistory := flag.Bool("no-history", false, "do not persist input history")
+	doctor := flag.Bool("doctor", false, "check local dependencies and configuration without network access")
 	version := flag.Bool("version", false, "show version")
 	flag.Parse()
 	if *version {
@@ -36,8 +37,19 @@ func run() int {
 		return 0
 	}
 	if flag.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: lingcell [-config path] [-no-history]")
+		fmt.Fprintln(os.Stderr, "usage: lingcell [-config path] [-no-history] [-doctor]")
 		return 2
+	}
+	if *doctor {
+		dir, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "FAIL working directory")
+			return 1
+		}
+		if err := app.Doctor(os.Stdout, *path, dir); err != nil {
+			return 1
+		}
+		return 0
 	}
 	fd := int(os.Stdin.Fd())
 	if !term.IsTerminal(fd) {

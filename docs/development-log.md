@@ -2,6 +2,26 @@
 
 记录已完成的工作与实际验证，按日期及主题倒序排列。日期使用 Asia/Shanghai 时区；架构与日常约定见 [AGENT.md](../AGENT.md)。
 
+## 2026-10-11: 交互阶段、模型错误与离线诊断
+
+### 目标与改动
+
+第一批在 `feat/interaction-doctor`、`.worktrees/interaction` 实施，基线 `ec411712d610ec3de24420649b3826fbf8a49b02`。
+
+- App 检查确认详情的写入和短写错误，失败时在读取确认输入前返回。静态提示覆盖分类、模型决策轮次及 Ctrl-C、文件读取、确认与命令执行；不加工 Bash PTY 输出。
+- Agent 增加同步 `Notify(Progress) error` 回调，展示失败阻止对应操作。工具名、配置字段、非流式、逐条确认和无自动重试保持兼容。
+- Model 增加可判别错误类型与七类固定提示，保留传输取消/超时身份，不展示远端正文或 URL。
+- CLI/App 增加离线 `--doctor`，检查本地依赖、配置、模型完整性、凭据变量存在性及项目读取；输出固定状态标签，无终端要求、网络请求或写入。
+- 回归覆盖部分写入/短写、阶段失败前无副作用、错误分类/身份/无重试、诊断脱敏与真实 CLI 错误后的 shell 恢复。
+
+### 验证状态
+
+开发侧 `make fmt`、`git diff --check` 与局部 `go test ./internal/app ./internal/agent ./internal/model` 通过。初次局部测试受沙箱只读 Go 缓存阻止，按权限流程在沙箱外重跑退出 0。候选 `8fb386f2f893731c7bcc91a57787007bf852100e` 经独立 `interaction_acceptance` Agent 在 detached worktree 验收 **PASS**，见 [交接报告](handoffs/interaction-doctor.md)。`make check`、`make lint`（fresh cache，5,456 条记录、8 个实际包）、`make build`、`make terminal` 及独立非终端 doctor 七场景全部退出 0。测试开始/结束 SHA 一致、源码干净，仅忽略 bin/；后续仅追加证据。doctor 通过固定脱敏标签、目录内容/元数据快照和本地 endpoint 零请求验证，未执行 syscall trace。
+
+### 未验证项
+
+真实供应商/凭据使用授权、成功的远程 SSH、个人 `.bashrc` 以及最低 Go 1.26 工具链不属于第一批已验证行为；后续批次分别记录。没有请求真实模型或修改用户配置。
+
 ## 2026-10-10: Go 注释规范与契约说明
 
 ### 目标与改动
