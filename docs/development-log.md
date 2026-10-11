@@ -15,7 +15,7 @@
 
 ### 验证状态与范围
 
-开发侧 Python 源码编译（不写缓存）和 `git diff --check` 通过。独立验收按 [交接报告](handoffs/terminal-daily.md) 执行两种 Go 工具链检查与本地 PTY；真实远程 SSH、个人配置和人工三会话日常试用尚未完成，不能把验收设施就绪当成第三批完整目标完成。
+开发侧 Python 源码编译（不写缓存）和 `git diff --check` 通过。候选 `e960692de1382a1c1d460bfae448fab4a2359afe` 经独立 `terminal_daily_acceptance` Agent 在 detached worktree 验收，本地设施 **PASS**，详见 [交接报告](handoffs/terminal-daily.md)。Go 1.27.2 / 1.26.0 均固定 `GOTOOLCHAIN=local`，各自 `make check`、有效 `make lint`（5,456 / 5,360 条记录、8 实际包）、`make build`、`make terminal` 全部退出 0；三独立 CLI 自动会话、缺工具 SKIP、合成 bashrc/SSH CLI 参数路径与失败脱敏通过。初次本地监听受沙箱限制，按权限流程重跑；测试开始/结束候选相同，源码干净，仅忽略 bin/。真实远程 SSH、个人配置和人工三会话日常试用尚未完成，完整第三批仍 **BLOCKED/未完成**；本地函数 fixture 不证明真实 SSH 网络、认证、raw 模式或远端 PTY。后续仅追加证据文档，合入范围限于已独立通过的本地设施。
 
 ## 2026-10-11: 交互阶段、模型错误与离线诊断
 
