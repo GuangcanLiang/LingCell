@@ -48,9 +48,10 @@ func (r Router) Route(input string) Decision {
 	}
 	first := strings.Fields(input)[0]
 	known := r.Knows != nil && r.Knows(first)
-	// Requests often quote shell expressions. Their punctuation must not grant
-	// execution authority, while paths and assignments remain explicit shell.
-	if !known && !strings.ContainsAny(first, "/=") && requestPrefix(input) {
+	// Requests may embed paths or assignment examples even in their first word.
+	// Only recognized command names take precedence over a clear request prefix;
+	// punctuation in an unknown request must not grant execution authority.
+	if !known && requestPrefix(input) {
 		return Decision{Agent, "natural language request"}
 	}
 	file, err := parse(input)
