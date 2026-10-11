@@ -30,6 +30,8 @@ type Config struct {
 	TimeoutSeconds int `json:"timeout_seconds"`
 	// HistoryFile stores top-level input. An empty value disables persistence.
 	HistoryFile string `json:"history_file"`
+	// ContextMaxBytes bounds the serialized model request, not provider tokens.
+	ContextMaxBytes int `json:"context_max_bytes"`
 }
 
 // DefaultPath returns the configuration path in the user's config directory.
@@ -46,7 +48,7 @@ func DefaultPath() string {
 // Files over 64 KiB, unknown fields, trailing JSON and invalid limits or URLs
 // are rejected. Load does not read the credential environment variable.
 func Load(path string) (Config, error) {
-	cfg := Config{MaxDecisions: 8, TimeoutSeconds: 60, APIKeyEnv: "LINGCELL_API_KEY"}
+	cfg := Config{ContextMaxBytes: 128 * 1024, MaxDecisions: 8, TimeoutSeconds: 60, APIKeyEnv: "LINGCELL_API_KEY"}
 	d, err := os.UserCacheDir()
 	if err == nil {
 		cfg.HistoryFile = filepath.Join(d, "lingcell", "history")
@@ -81,6 +83,9 @@ func Load(path string) (Config, error) {
 	// One successfully decoded object is insufficient if more input follows.
 	if err := dec.Decode(&extra); err != io.EOF {
 		return cfg, errors.New("config must contain one JSON object")
+	}
+	if cfg.ContextMaxBytes < 16*1024 || cfg.ContextMaxBytes > 2*1024*1024 {
+		return cfg, errors.New("context_max_bytes must be between 16384 and 2097152")
 	}
 	if cfg.MaxDecisions < 1 || cfg.MaxDecisions > 64 {
 		return cfg, errors.New("max_decisions must be between 1 and 64")
