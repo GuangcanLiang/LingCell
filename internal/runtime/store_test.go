@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -122,5 +123,44 @@ func TestSessionLockAndArchiveBound(t *testing.T) {
 	}
 	if err = s.DeleteSession(id, "/project"); err == nil {
 		t.Fatal("deleted locked session")
+	}
+}
+
+func TestRedactionPreservesOrdinaryConstraints(t *testing.T) {
+	text := "Our task-specific code is ORCHID42; please keep it"
+	if got := Redact(text); got != text {
+		t.Fatalf("ordinary constraint redacted: %q", got)
+	}
+	if got := Redact("credential sk-abcdefgh12345"); strings.Contains(got, "sk-abcdefgh") {
+		t.Fatal("recognizable credential retained")
+	}
+}
+
+func TestDiskFullRejectsArchiveWrite(t *testing.T) {
+	s := testStore(t)
+	id, err := newID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.Exec("INSERT INTO sessions VALUES(?,?,?)", id, "/project", timestamp()); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.saveTurn(id, Turn{Number: 1, Status: "running"}); err != nil {
+		t.Fatal(err)
+	}
+	var pages int
+	if err = s.db.QueryRow("PRAGMA page_count").Scan(&pages); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.Exec(fmt.Sprintf("PRAGMA max_page_count=%d", pages)); err != nil {
+		t.Fatal(err)
+	}
+	large := Turn{Number: 1, Status: "completed", Steps: []Step{{ID: "large", Result: strings.Repeat("x", 128*1024)}}}
+	if err = s.saveTurn(id, large); err == nil {
+		t.Fatal("disk-full write accepted")
+	}
+	records, err := s.turns(id)
+	if err != nil || len(records) != 1 || records[0].Status != "running" || len(records[0].Steps) != 0 {
+		t.Fatal("failed transaction changed original record", err)
 	}
 }

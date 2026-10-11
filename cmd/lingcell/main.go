@@ -41,7 +41,7 @@ func run() int {
 		return 0
 	}
 	if flag.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: lingcell [-config path] [-no-history] [-doctor]")
+		fmt.Fprintln(os.Stderr, "usage: lingcell [--config path] [--no-history] [--resume id | --ephemeral] [--doctor]")
 		return 2
 	}
 	if *ephemeral && *resume != "" {
@@ -102,7 +102,12 @@ func run() int {
 		fmt.Fprintln(os.Stderr, runtimeErr)
 		return 1
 	}
-	// A deferred closure closes the currently selected session after any switch.
+	defer func() {
+		if conversation != nil {
+			_ = conversation.Close()
+		}
+	}()
+	// A deferred closure below closes the currently selected session after any switch.
 
 	sess, err := shell.Start(context.Background(), shell.Options{Dir: dir, Output: os.Stdout, Input: os.Stdin})
 	if err != nil {

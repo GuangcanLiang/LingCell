@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -102,6 +103,9 @@ func (r *Runtime) validateMemory(m Memory, manual bool) error {
 			return errors.New("preference lacks explicit preference evidence")
 		}
 	} else {
+		if regexp.MustCompile(`(?i)(请记住|please remember|remember that|ignore previous|ignore instructions|无需确认)`).MatchString(m.Source.Quote) {
+			return errors.New("tool instructions cannot become a memory fact")
+		}
 		if msg.Role != "tool" || msg.ToolCallID != m.Source.ToolID {
 			return errors.New("fact must cite tool evidence")
 		}
@@ -123,8 +127,11 @@ func (r *Runtime) validateMemory(m Memory, manual bool) error {
 			return errors.New("fact cannot cite tool error")
 		}
 		if m.Scope == "project" {
-			if cwd, ok := result["cwd"].(string); ok && cwd != r.Session.Root {
-				return errors.New("project fact command ran outside project root")
+			if cwd, ok := result["cwd"].(string); ok {
+				rel, err := filepath.Rel(r.Session.Root, cwd)
+				if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+					return errors.New("project fact command ran outside project root")
+				}
 			}
 		}
 		if code, ok := result["exit_code"].(float64); ok && code != 0 {
@@ -512,7 +519,24 @@ func (r *Runtime) ObserveEvidence(msg model.Message) (err error) {
 	}
 	key := digest(step.Name + "\n" + r.Store.clean(step.Arguments))
 	hash := digest(r.Store.clean(msg.Content))
-	entries, err := r.ListMemory("project")
+	if err = r.expireMemory(); err != nil {
+		return err
+	}
+	rows, err := r.Store.db.Query("SELECT "+memoryColumns+" FROM memories WHERE scope='project' AND owner=? AND status='valid' AND json_extract(source,'$.evidence_key')=? AND json_extract(source,'$.evidence_hash')<>?", r.Session.Root, key, hash)
+	if err != nil {
+		return err
+	}
+	var entries []Memory
+	for rows.Next() {
+		m, e := scanMemory(rows)
+		if e != nil {
+			rows.Close()
+			return e
+		}
+		entries = append(entries, m)
+	}
+	err = rows.Err()
+	rows.Close()
 	if err != nil {
 		return err
 	}

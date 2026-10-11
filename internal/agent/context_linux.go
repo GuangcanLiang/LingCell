@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"lingcell/internal/model"
 	"os"
 	"runtime"
 
@@ -20,7 +21,7 @@ type runtimeContext struct {
 	Tools        []string `json:"tools"`
 }
 
-func newRuntimeContext(cwd, root string) runtimeContext {
+func newRuntimeContext(cwd, root string, extra ...model.Tool) runtimeContext {
 	kernel := "unknown"
 	var uts unix.Utsname
 	if err := unix.Uname(&uts); err == nil {
@@ -31,7 +32,7 @@ func newRuntimeContext(cwd, root string) runtimeContext {
 		privilege = "root"
 	}
 	var names []string
-	for _, tool := range Tools() {
+	for _, tool := range append(Tools(), extra...) {
 		names = append(names, tool.Function.Name)
 	}
 	return runtimeContext{OS: runtime.GOOS, Kernel: kernel, Architecture: runtime.GOARCH, Privilege: privilege, Cwd: cwd, ProjectRoot: root, Tools: names}

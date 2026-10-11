@@ -79,6 +79,15 @@ func Load(path string) (Config, error) {
 	if err := dec.Decode(&cfg); err != nil {
 		return cfg, fmt.Errorf("config: %w", err)
 	}
+	var limits map[string]json.RawMessage
+	if err := json.Unmarshal(data, &limits); err != nil {
+		return cfg, fmt.Errorf("config: %w", err)
+	}
+	for _, name := range []string{"context_max_bytes", "max_decisions", "timeout_seconds"} {
+		if raw, ok := limits[name]; ok && bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			return cfg, fmt.Errorf("%s must be an integer", name)
+		}
+	}
 	var extra any
 	// One successfully decoded object is insufficient if more input follows.
 	if err := dec.Decode(&extra); err != io.EOF {

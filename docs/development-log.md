@@ -14,9 +14,11 @@
 
 第三批接入 `agent` / `app` / CLI：每轮新预算但沿用 runtime；命令写入开始/结果门禁、普通命令记录、会话/记忆管理、`--resume` / `--ephemeral`；新增 `memory.go` / 回归，含来源校验、版本、FTS5 trigram/短查询、范围隔离、冲突/过期与重新观察证据失效。提取一次有界请求，失败不影响任务。输入历史过滤已知凭据，不修改实际执行参数。维护指南同步解除旧“不保存上下文/无跨会话记忆”边界，新增 [runtime 说明](runtime.md)。
 
+第四批新增 `scripts/verify_runtime.py` 并接入 `make terminal`；既有 PTY 模型 fixture 选择当前轮次、独立处理记忆提取，临时 XDG state 隔离宿主。新增磁盘满事务回滚回归、上下文参数 null 校验、历史调用 ID 的轮内唯一命名；闭合轮次使用已过滤归档继续上下文。PTY 发现过滤误伤 task-specific，修正词边界并补回归。
+
 ### 验证状态
 
-开发局部编译/测试通过（现有 agent/app/config/model）；SQLite 故障回归与独立正式验收尚未完成。默认缓存及模块缓存写入受到限制，已使用经批准的 Go 1.27.2 一致工具链、可写缓存和固定依赖下载。后续批次及最终独立结果将补充此条目。
+开发 SQLite/上下文/记忆/agent/app/config/model 局部测试通过；runtime 新 PTY 四组场景通过（连续/恢复/隔离/管理/未知结果、临时模式、现存记忆隔离/no-history、存储失败）。完整 make check/lint/build/terminal 和最低 Go 1.26 正式验收交独立 Agent，尚未完成。默认缓存及本地监听受限，已使用经批准的 Go 1.27.2 一致工具链、可写缓存和本地模拟服务。后续独立结果补充到 [runtime 交接](handoffs/agent-runtime.md)。
 
 ### 未验证项
 

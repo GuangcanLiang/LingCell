@@ -37,7 +37,7 @@ func paired(t Turn) []model.Message {
 		}
 		calls := append([]model.ToolCall(nil), m.ToolCalls...)
 		for j := range calls {
-			calls[j].ID = fmt.Sprintf("lingcell_history_%d_%s", t.Number, calls[j].ID)
+			calls[j].ID = fmt.Sprintf("lingcell_history_%d_%d_%d_%s", t.Number, i, j, calls[j].ID)
 		}
 		m.ToolCalls = calls
 		out = append(out, m)

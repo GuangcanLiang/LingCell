@@ -164,7 +164,7 @@ func newID() (string, error) {
 	return hex.EncodeToString(b[:]), nil
 }
 
-var sensitive = regexp.MustCompile(`(?i)(-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*|(?:sk-[A-Za-z0-9_-]{8,}|AKIA[A-Z0-9]{16})|(?:authorization\s*[:=]\s*bearer\s+\S+)|(?:api[_-]?key|password|secret|token)\s*[:=]\s*["']?[^\s"',;]+)`)
+var sensitive = regexp.MustCompile(`(?i)(-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*|(?:\bsk-[A-Za-z0-9_-]{8,}|\bAKIA[A-Z0-9]{16})|(?:authorization\s*[:=]\s*bearer\s+\S+)|(?:api[_-]?key|password|secret|token)\s*[:=]\s*["']?[^\s"',;]+)`)
 
 // Redact filters known credential values and recognizable sensitive patterns.
 // It cannot identify arbitrary secrets. Execution arguments must stay unmodified.
@@ -270,6 +270,10 @@ func (s *Store) lock(id string) (*os.File, error) {
 	}
 	f, err := os.OpenFile(s.path+"."+id+".lock", os.O_CREATE|os.O_RDWR|unix.O_NOFOLLOW, 0600)
 	if err != nil {
+		return nil, err
+	}
+	if err = f.Chmod(0600); err != nil {
+		f.Close()
 		return nil, err
 	}
 	if err = unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {

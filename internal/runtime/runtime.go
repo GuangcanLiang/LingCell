@@ -121,7 +121,17 @@ func (r *Runtime) persist() error {
 	} else {
 		b, _ := json.Marshal(r.active)
 		if len(b) > maxTurnBytes {
-			return errors.New("turn archive exceeds 2 MiB")
+			r.fault = errors.New("turn archive exceeds 2 MiB")
+			return r.fault
+		}
+		size := len(b)
+		for _, turn := range r.Turns {
+			raw, _ := json.Marshal(turn)
+			size += len(raw)
+		}
+		if size > maxSessionBytes {
+			r.fault = errors.New("session archive exceeds 64 MiB; start a new session")
+			return r.fault
 		}
 	}
 	return nil
@@ -194,6 +204,20 @@ func (r *Runtime) Finish(success bool) error {
 		}
 	}
 	err := r.persist()
+	if err == nil && r.Store != nil {
+		var raw string
+		loadErr := r.Store.db.QueryRow("SELECT record FROM turns WHERE session=? AND number=?", r.Session.ID, t.Number).Scan(&raw)
+		var saved Turn
+		if loadErr == nil {
+			loadErr = json.Unmarshal([]byte(raw), &saved)
+		}
+		if loadErr != nil {
+			r.fault = loadErr
+			err = loadErr
+		} else {
+			t = &saved
+		}
+	}
 	r.Turns = append(r.Turns, *t)
 	r.active = nil
 	return err

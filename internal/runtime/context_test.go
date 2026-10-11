@@ -177,3 +177,40 @@ func TestWriteFaultStopsSubsequentTurns(t *testing.T) {
 		t.Fatal("continued after write failure")
 	}
 }
+
+func TestHistoryFragmentsReconstructOriginalAndRejectedIDsStayUnique(t *testing.T) {
+	r := testRuntime(t, nil)
+	c := model.ToolCall{ID: "duplicate", Type: "function", Function: model.FunctionCall{Name: "read_file", Arguments: `{"path":"a"}`}}
+	messages := []model.Message{{Role: "user", Content: strings.Repeat("line constraint\n", 4000)}, {Role: "assistant", ToolCalls: []model.ToolCall{c, c}}}
+	recordTurn(t, r, messages)
+	var original strings.Builder
+	offset := 0
+	for {
+		page, err := r.History(1, 1, offset)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := json.Marshal(page)
+		if len(raw) > 32*1024 {
+			t.Fatal("history page over budget")
+		}
+		value, ok := page.(map[string]any)
+		if !ok {
+			t.Fatal("large turn did not return fragment")
+		}
+		original.WriteString(value["record_fragment"].(string))
+		offset = value["next_offset"].(int)
+		if !value["more"].(bool) {
+			break
+		}
+	}
+	want, _ := json.Marshal(r.Turns[0])
+	if original.String() != string(want) {
+		t.Fatal("pagination lost original constraints")
+	}
+	projected := paired(r.Turns[0])
+	calls := projected[1].ToolCalls
+	if len(calls) != 2 || calls[0].ID == calls[1].ID || projected[2].ToolCallID != calls[0].ID || projected[3].ToolCallID != calls[1].ID {
+		t.Fatal("rejected duplicate IDs became invalid historical protocol")
+	}
+}
