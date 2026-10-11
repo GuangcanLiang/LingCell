@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Exercise the built CLI through a real Linux PTY and a local mock model.
 
-No provider credentials, remote hosts, or third-party Python packages are used.
+Defaults use only local mock HTTP and a synthetic bashrc. Explicit --ssh-target
+and --bashrc options opt into a user-authorized remote host and personal config.
+No provider credentials or third-party Python packages are required.
 """
 import argparse
 import errno
@@ -13,6 +15,7 @@ import pathlib
 import re
 import select
 import shutil
+import shlex
 import signal
 import struct
 import subprocess
@@ -79,7 +82,8 @@ class MockModel(http.server.BaseHTTPRequestHandler):
 
 
 class Terminal:
-    def __init__(self, binary, root, config):
+    def __init__(self, binary, root, config, private=False):
+        self.private = private
         self.master, self.slave = os.openpty()
         fcntl.ioctl(self.slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
         self.original = termios.tcgetattr(self.slave)
@@ -102,7 +106,7 @@ class Terminal:
         while expected not in self.data:
             remaining = end - time.monotonic()
             if remaining <= 0:
-                raise AssertionError(f"missing {text!r}: {self.data[-2500:]!r}")
+                raise AssertionError("missing terminal marker (private session output omitted)" if self.private else f"missing {text!r}: {self.data[-2500:]!r}")
             if select.select([self.master], [], [], min(remaining, .1))[0]:
                 try:
                     part = os.read(self.master, 65536)
@@ -112,7 +116,7 @@ class Terminal:
                     else:
                         raise
                 if not part:
-                    raise AssertionError(f"terminal exited waiting for {text!r}: {self.data[-2500:]!r}")
+                    raise AssertionError("terminal exited before expected marker (private session output omitted)" if self.private else f"terminal exited waiting for {text!r}: {self.data[-2500:]!r}")
                 self.data += part
                 # Answer readline's cursor-position query like a terminal emulator.
                 if b"\x1b[6n" in part:
@@ -164,22 +168,62 @@ class Terminal:
         os.close(self.slave)
 
 
-def verify(binary):
+def verify_ssh(tty, target):
+    # This bounded, read-only remote sh script has handshake points instead of
+    # matching a remote prompt. SIGINT interrupts the remote sleep then returns
+    # control to the same session; no remote file or persistent state is written.
+    remote = "; ".join([
+        "trap 'printf \"SSH_INTERRUPT_OK\\n\"' INT",
+        "printf 'SSH_READY\\n'",
+        "stty size",
+        "IFS= read -r reply || exit 1",
+        "stty size",
+        "printf 'SSH_SLEEPING\\n'",
+        "sleep 30",
+        "printf 'SSH_AFTER_INTERRUPT\\n'",
+        "IFS= read -r reply || exit 1",
+        "exit 0",
+    ])
+    command = "ssh -tt -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -- " + shlex.quote(target) + " " + shlex.quote("sh -c " + shlex.quote(remote))
+    tty.send(":sh " + command + "\r")
+    tty.until("SSH_READY", timeout=15)
+    tty.until("40 100\r\n")
+    fcntl.ioctl(tty.slave, termios.TIOCSWINSZ, struct.pack("HHHH", 36, 110, 0, 0))
+    os.kill(tty.process.pid, signal.SIGWINCH)
+    time.sleep(.15)
+    tty.send("continue\r")
+    tty.until("36 110\r\n")
+    tty.until("SSH_SLEEPING")
+    time.sleep(.15)
+    tty.send("\x03")
+    tty.until("SSH_INTERRUPT_OK", timeout=5)
+    tty.until("SSH_AFTER_INTERRUPT", timeout=5)
+    tty.send("exit\r")
+    tty.prompt()
+    tty.command("printf 'SSH_LOCAL_INPUT_OK\\n'", "SSH_LOCAL_INPUT_OK\r\n")
+
+
+def verify(binary, ssh_target=None, bashrc=None):
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), MockModel)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         with tempfile.TemporaryDirectory(prefix="lingcell-terminal-") as temporary:
             root = pathlib.Path(temporary)
             (root / "README.md").write_text("PRIVATE_FILE_CONTEXT\n")
-            (root / ".bashrc").write_text("printf 'RC_LOADED\\n'\nalias personal='echo PERSONAL_ALIAS'\nPROMPT_COMMAND=':'\n")
+            if bashrc is None:
+                (root / ".bashrc").write_text("printf 'RC_LOADED\\n'\nalias personal='echo PERSONAL_ALIAS'\nPROMPT_COMMAND=':'\n")
+            else:
+                shutil.copyfile(bashrc, root / ".bashrc")
             config = root / "config.json"
             config.write_text(json.dumps({"base_url": f"http://127.0.0.1:{server.server_port}/v1", "model": "mock", "api_key_env": "UNSET_TEST_KEY", "timeout_seconds": 5}))
-            tty = Terminal(binary, root, config)
+            tty = Terminal(binary, root, config, private=bool(bashrc or ssh_target))
             try:
-                tty.until("RC_LOADED")
+                if bashrc is None:
+                    tty.until("RC_LOADED")
                 tty.prompt()
-                tty.command("personal", "PERSONAL_ALIAS\r\n")
-                tty.command("person\t", "PERSONAL_ALIAS\r\n")
+                if bashrc is None:
+                    tty.command("personal", "PERSONAL_ALIAS\r\n")
+                    tty.command("person\t", "PERSONAL_ALIAS\r\n")
                 tty.command("basenam\t /tmp/file", "file\r\n")
                 tty.command("cat READ\t", "PRIVATE_FILE_CONTEXT\r\n")
                 tty.command("export LC_CLI=state; printf '%s\\n' \"$LC_CLI\"", "state\r\n")
@@ -209,13 +253,29 @@ def verify(binary):
                     tty.send("iPTY_OK\x1b:wq\r")
                     tty.prompt()
                     assert (root / "vim.txt").read_text() == "PTY_OK\n"
+                    print("PASS vim interactive edit and exit")
+                else:
+                    print("SKIP vim: executable unavailable")
                 if shutil.which("top"):
                     tty.send("top\r")
                     tty.until("Tasks:")
                     tty.send("q")
                     tty.prompt()
+                    print("PASS top interactive display and exit")
+                else:
+                    print("SKIP top: executable unavailable")
                 if shutil.which("ssh"):
                     tty.command("ssh -V", "OpenSSH_")
+                    print("PASS ssh local version command")
+                else:
+                    print("SKIP ssh local version: executable unavailable")
+                if ssh_target:
+                    if not shutil.which("ssh"):
+                        raise AssertionError("authorized SSH check requires ssh executable")
+                    verify_ssh(tty, ssh_target)
+                    print("PASS remote SSH interaction, resize, interrupt and local input restoration")
+                else:
+                    print("SKIP remote SSH: no authorized --ssh-target")
                 for request, expected in [("错误401", "model authentication failed"), ("错误429", "model rate limited"), ("错误503", "model service unavailable"), ("错误504", "model request timed out"), ("协议错误", "model protocol incompatible")]:
                     count = len(MockModel.requests)
                     tty.send(":ai " + request + "\r")
@@ -267,12 +327,13 @@ def verify(binary):
                 assert "PRIVATE_FILE_CONTEXT" not in history and "AGENT_FINISHED" not in history
                 assert "printf 'APPROVED_RESULT" not in history and ":ai" in history
                 assert any(m.get("role") == "tool" for r in MockModel.requests for m in r["messages"])
+                print("PASS session 1: shell state, multiline, jobs, resize, Agent tools, errors, history and terminal restoration")
             finally:
                 tty.close()
             # Shell works without a provider, and failed model requests return
             # to the same usable Bash session.
             before = len(MockModel.requests)
-            tty = Terminal(binary, root, root / "no-config.json")
+            tty = Terminal(binary, root, root / "no-config.json", private=bool(bashrc))
             try:
                 tty.prompt()
                 tty.command("echo OFFLINE_OK", "OFFLINE_OK\r\n")
@@ -283,9 +344,43 @@ def verify(binary):
                 assert tty.process.wait(3) == 0
                 assert termios.tcgetattr(tty.slave) == tty.original
                 assert len(MockModel.requests) == before
+                print("PASS session 2: offline model independence and terminal restoration")
             finally:
                 tty.close()
-        print("PASS: real CLI PTY, state, multiline, Ctrl-C/Z, bg/fg, resize, vim/top, mock Agent approval/refusal, diagnosis, classification, cancellation, history and terminal restoration")
+            # A fresh process must not inherit state from either prior Bash.
+            tty = Terminal(binary, root, config, private=bool(bashrc))
+            try:
+                tty.prompt()
+                tty.command(":sh printf 'NEW_SESSION:%s\\n' \"${LC_CLI-unset}\"", "NEW_SESSION:unset\r\n")
+                tty.command("export SESSION_THREE=ok; echo \"$SESSION_THREE\"", "ok\r\n")
+                tty.send("echo 'session\r")
+                tty.until("... ")
+                tty.send("three'\r")
+                tty.finish("session\r\nthree\r\n")
+                tty.start_command("sleep 30")
+                tty.send("\x1a")
+                tty.finish("Stopped")
+                tty.command("bg; printf 'SESSION_BG\\n'", "SESSION_BG\r\n")
+                tty.start_command("fg")
+                tty.send("\x03")
+                tty.prompt()
+                MockModel.waiting.clear()
+                tty.start_command(":ai 等待取消")
+                assert MockModel.waiting.wait(3)
+                tty.send("\x03")
+                tty.finish("model request canceled")
+                tty.command("echo \"$SESSION_THREE\"", "ok\r\n")
+                tty.send(":exit\r")
+                assert tty.process.wait(3) == 0
+                assert termios.tcgetattr(tty.slave) == tty.original
+                print("PASS session 3: fresh Bash, state, multiline, job control, Agent cancellation and terminal restoration")
+            finally:
+                tty.close()
+        if bashrc:
+            print("PASS supplied bashrc loaded in three temporary CLI sessions")
+        else:
+            print("SKIP personal bashrc: synthetic config only; no authorized --bashrc")
+        print("PASS required local CLI PTY checks (three independent sessions); optional checks reported separately")
     finally:
         server.shutdown()
         server.server_close()
@@ -294,5 +389,11 @@ def verify(binary):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=pathlib.Path, default=pathlib.Path("bin/lingcell"))
+    parser.add_argument("--ssh-target", help="authorized user@host; known host and existing noninteractive authentication required")
+    parser.add_argument("--bashrc", type=pathlib.Path, help="authorized personal bashrc to load in temporary sessions (may execute local hooks)")
     args = parser.parse_args()
-    verify(args.binary.resolve())
+    try:
+        verify(args.binary.resolve(), args.ssh_target, args.bashrc)
+    except Exception:
+        print("FAIL terminal acceptance; required checks did not complete", flush=True)
+        raise
