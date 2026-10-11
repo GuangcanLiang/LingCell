@@ -16,7 +16,7 @@
 
 ### 验证状态
 
-开发侧 `make fmt`、`git diff --check` 与局部 `go test ./internal/app ./internal/agent ./internal/model` 通过。初次局部测试受沙箱只读 Go 缓存阻止，按权限流程在沙箱外重跑退出 0。正式验收结果待独立测试 Agent 给出，见 [交接报告](handoffs/interaction-doctor.md)。
+开发侧 `make fmt`、`git diff --check` 与局部 `go test ./internal/app ./internal/agent ./internal/model` 通过。初次局部测试受沙箱只读 Go 缓存阻止，按权限流程在沙箱外重跑退出 0。候选 `8fb386f2f893731c7bcc91a57787007bf852100e` 经独立 `interaction_acceptance` Agent 在 detached worktree 验收 **PASS**，见 [交接报告](handoffs/interaction-doctor.md)。`make check`、`make lint`（fresh cache，5,456 条记录、8 个实际包）、`make build`、`make terminal` 及独立非终端 doctor 七场景全部退出 0。测试开始/结束 SHA 一致、源码干净，仅忽略 bin/；后续仅追加证据。doctor 通过固定脱敏标签、目录内容/元数据快照和本地 endpoint 零请求验证，未执行 syscall trace。
 
 ### 未验证项
 
