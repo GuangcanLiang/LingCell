@@ -108,3 +108,51 @@ func TestCancellationAndNoRedirect(t *testing.T) {
 		t.Fatal("unexpected redirect forwarding")
 	}
 }
+
+// TestErrorCategories uses local fixtures; error text must not expose response
+// bodies, endpoints or credentials and each task sends exactly one request.
+func TestErrorCategories(t *testing.T) {
+	for _, test := range []struct {
+		status int
+		body   string
+		kind   ErrorKind
+	}{
+		{401, "PRIVATE_SECRET", Authentication}, {403, "PRIVATE_SECRET", Authentication},
+		{429, "PRIVATE_SECRET", RateLimit}, {500, "PRIVATE_SECRET", Service},
+		{503, "PRIVATE_SECRET", Service}, {408, "PRIVATE_SECRET", Timeout}, {504, "PRIVATE_SECRET", Timeout},
+		{404, "PRIVATE_SECRET", Protocol}, {200, "PRIVATE_SECRET", Protocol},
+		{200, `{"choices":[{"finish_reason":"length","message":{"role":"assistant","content":"PRIVATE_SECRET"}}]}`, Protocol},
+	} {
+		t.Run(string(test.kind)+http.StatusText(test.status), func(t *testing.T) {
+			count := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				count++
+				w.WriteHeader(test.status)
+				w.Write([]byte(test.body))
+			}))
+			defer srv.Close()
+			c := New(config.Config{BaseURL: srv.URL + "/PRIVATE_ENDPOINT", Model: "mock", TimeoutSeconds: 1})
+			_, err := c.Complete(context.Background(), nil, nil)
+			var failure *Error
+			if !errors.As(err, &failure) || failure.Kind != test.kind || strings.Contains(err.Error(), "PRIVATE") || count != 1 {
+				t.Fatalf("category/count: %v %d", err, count)
+			}
+		})
+	}
+	c := New(config.Config{})
+	_, err := c.Complete(context.Background(), nil, nil)
+	var failure *Error
+	if !errors.As(err, &failure) || failure.Kind != Configuration {
+		t.Fatalf("missing configuration: %v", err)
+	}
+	for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
+		err := transportError(cause)
+		want := Timeout
+		if cause == context.Canceled {
+			want = Canceled
+		}
+		if !errors.As(err, &failure) || failure.Kind != want || !errors.Is(err, cause) {
+			t.Fatalf("identity lost: %v", err)
+		}
+	}
+}

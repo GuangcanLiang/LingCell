@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -188,5 +189,40 @@ func TestPriorFailureRemainsToolData(t *testing.T) {
 	}
 	if len(s.commands) != 0 {
 		t.Fatal("prior command was replayed")
+	}
+}
+
+// TestProgressFailureStopsOperations covers observer failures before model,
+// reads, confirmation and execution, and verifies decision counts on success.
+func TestProgressFailureStopsOperations(t *testing.T) {
+	for _, stop := range []Stage{"", WaitingModel, ReadingFiles, WaitingConfirmation, ExecutingCommand} {
+		t.Run(string(stop), func(t *testing.T) {
+			m := &mockModel{replies: []model.Message{call("1", "read_file", `{"path":"main.go"}`), call("2", "run_command", `{"command":"touch marker","purpose":"test"}`), {Role: "assistant", Content: "done"}}}
+			s := &mockShell{}
+			r := &mockReader{}
+			confirms := 0
+			var events []Progress
+			a := Agent{Model: m, Shell: s, Reader: r, Confirm: func(string, string, string) (bool, error) { confirms++; return true, nil }, Notify: func(p Progress) error {
+				events = append(events, p)
+				if p.Stage == stop {
+					return io.ErrClosedPipe
+				}
+				return nil
+			}}
+			err := a.Run(context.Background(), "test", "/project")
+			if stop != "" {
+				if !errors.Is(err, io.ErrClosedPipe) || len(s.commands) != 0 {
+					t.Fatalf("observer failure executed: %v", err)
+				}
+				if stop == WaitingModel && len(m.requests) != 0 || stop == ReadingFiles && len(r.reads) != 0 || stop == WaitingConfirmation && confirms != 0 {
+					t.Fatal("operation preceded observer")
+				}
+			} else {
+				want := []Progress{{WaitingModel, 1, 8}, {ReadingFiles, 1, 8}, {WaitingModel, 2, 8}, {WaitingConfirmation, 2, 8}, {ExecutingCommand, 0, 0}, {WaitingModel, 3, 8}}
+				if err != nil || !reflect.DeepEqual(events, want) {
+					t.Fatalf("progress: %+v %v", events, err)
+				}
+			}
+		})
 	}
 }

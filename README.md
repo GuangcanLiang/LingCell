@@ -35,6 +35,12 @@ export APP_MODE=dev
 
 `find large files` 的首词是已知命令，因此会直接交给 `find`；表达自然语言需求时可用 `:ai find large files`。普通命令的执行权限来自用户输入，Agent 的执行权限来自确认界面。
 
+## 离线诊断与交互提示
+
+`./bin/lingcell --doctor [--config <路径>]` 无需交互终端，检查 Bash/stty、配置合法性、模型 endpoint 与名称、凭据环境变量是否有值，以及项目读取的内核路径约束。默认不联网、不写配置或历史，不显示配置值、密钥、文件名或内容。任一 `FAIL` 返回退出码 1；`WARN` 表示凭据变量缺失（无认证本地服务仍可使用），`SKIP` 表示未指定凭据变量。缺少模型配置不影响普通 shell。
+
+交互时以静态文本提示输入分类、等待模型的当前决策轮次、读取文件、等待确认和执行命令；等待模型可用 Ctrl-C 取消。模型失败区分配置、认证、限流、服务异常、超时、取消与协议不兼容，并提供下一步提示。失败后返回提示符，普通命令仍可运行；非流式请求、逐条确认、无自动重试行为保持不变。确认详情或阶段提示写入失败时停止任务，不进入执行。
+
 ## 模型配置
 
 配置默认位于 `$XDG_CONFIG_HOME/lingcell/config.json`，未设置 XDG 时为 `~/.config/lingcell/config.json`。可用 `--config <路径>` 指定其他文件。参考 [config.example.json](config.example.json)：

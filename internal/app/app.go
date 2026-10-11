@@ -169,14 +169,21 @@ type modelOutput struct{ io.Writer }
 
 // Write reports consumed input bytes, even when escaping expands the text.
 func (w modelOutput) Write(data []byte) (int, error) {
-	_, err := io.WriteString(w.Writer, visible(string(data)))
+	text := visible(string(data))
+	n, err := io.WriteString(w.Writer, text)
+	if err == nil && n != len(text) {
+		err = io.ErrShortWrite
+	}
 	return len(data), err
 }
 
 // confirm displays the literal proposal and accepts only y or yes.
 // Empty input, an interrupt or EOF rejects it; no command is executed here.
 func (a *App) confirm(command, cwd, purpose string) (bool, error) {
-	fmt.Fprintf(a.Output, "\n目的：%s\n目录：%s\n命令：\n%s\n", visible(purpose), visible(cwd), visible(command))
+	text := fmt.Sprintf("\n目的：%s\n目录：%s\n命令：\n%s\n", visible(purpose), visible(cwd), visible(command))
+	if _, err := (modelOutput{a.Output}).Write([]byte(text)); err != nil {
+		return false, fmt.Errorf("display command proposal: %w", err)
+	}
 	a.confirmation.Prompt.Primary(func() string { return "执行？[y/N] " })
 	answer, err := a.confirmation.Readline()
 	if errors.Is(err, readline.ErrInterrupt) || errors.Is(err, io.EOF) {
@@ -204,7 +211,7 @@ func (a *App) task(ctx context.Context, fn func(context.Context) error) error {
 // Any prior user-command result stays tool data for diagnosis, not instructions.
 func (a *App) ask(ctx context.Context, request string, previous ...shell.Result) error {
 	return a.task(ctx, func(ctx context.Context) error {
-		runner := agent.Agent{Model: a.Model, Shell: a.Shell, Reader: a.Reader.NewTask(), Confirm: a.confirm, Output: modelOutput{a.Output}, MaxDecisions: a.Config.MaxDecisions, Timeout: time.Duration(a.Config.TimeoutSeconds) * time.Second}
+		runner := agent.Agent{Model: a.Model, Shell: a.Shell, Reader: a.Reader.NewTask(), Confirm: a.confirm, Output: modelOutput{a.Output}, Notify: a.progress, MaxDecisions: a.Config.MaxDecisions, Timeout: time.Duration(a.Config.TimeoutSeconds) * time.Second}
 		return runner.Run(ctx, request, a.Reader.Root, previous...)
 	})
 }
@@ -214,7 +221,14 @@ func (a *App) ask(ctx context.Context, request string, previous ...shell.Result)
 // in the current Agent loop rather than recursively starting another task.
 func (a *App) execute(ctx context.Context, command string) error {
 	var result shell.Result
-	err := a.task(ctx, func(ctx context.Context) error { var err error; result, err = a.Shell.Run(ctx, command); return err })
+	err := a.task(ctx, func(ctx context.Context) error {
+		if err := a.progress(agent.Progress{Stage: agent.ExecutingCommand}); err != nil {
+			return err
+		}
+		var err error
+		result, err = a.Shell.Run(ctx, command)
+		return err
+	})
 	if err != nil {
 		return err
 	}
@@ -294,11 +308,17 @@ func (a *App) Run(ctx context.Context) error {
 				err = a.task(ctx, func(ctx context.Context) error {
 					reqCtx, cancel := context.WithTimeout(ctx, time.Duration(a.Config.TimeoutSeconds)*time.Second)
 					defer cancel()
+					if err := a.status("输入分类；等待模型（第 1/1 轮）；Ctrl-C 取消"); err != nil {
+						return err
+					}
 					kind, e := model.Classify(reqCtx, a.Model, input)
 					if e != nil {
 						return e
 					}
 					if kind == "shell" {
+						if err := a.progress(agent.Progress{Stage: agent.WaitingConfirmation}); err != nil {
+							return err
+						}
 						yes, e := a.confirm(input, a.Shell.Cwd(), "模型将模糊输入识别为命令")
 						if e != nil {
 							return e
@@ -318,4 +338,24 @@ func (a *App) Run(ctx context.Context) error {
 			fmt.Fprintln(a.Output, "LingCell:", visible(err.Error()))
 		}
 	}
+}
+
+// status writes static app-owned text without modifying raw PTY output.
+func (a *App) status(text string) error {
+	_, err := (modelOutput{a.Output}).Write([]byte("LingCell：" + text + "\n"))
+	return err
+}
+
+func (a *App) progress(p agent.Progress) error {
+	switch p.Stage {
+	case agent.WaitingModel:
+		return a.status(fmt.Sprintf("等待模型（第 %d/%d 轮）；Ctrl-C 取消", p.Decision, p.Limit))
+	case agent.ReadingFiles:
+		return a.status("读取文件")
+	case agent.WaitingConfirmation:
+		return a.status("等待确认")
+	case agent.ExecutingCommand:
+		return a.status("执行命令")
+	}
+	return nil
 }

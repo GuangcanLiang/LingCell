@@ -37,6 +37,17 @@ class MockModel(http.server.BaseHTTPRequestHandler):
             answer = {"role": "assistant", "content": '{"kind":"shell"}'}
         else:
             request = json.loads(messages[1]["content"])["request"]
+            if request.startswith("错误"):
+                status = int(request.removeprefix("错误"))
+                self.send_response(status)
+                self.end_headers()
+                self.wfile.write(b"PRIVATE_REMOTE_BODY")
+                return
+            if request == "协议错误":
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"PRIVATE_INVALID_JSON")
+                return
             results = [m for m in messages if m["role"] == "tool"]
             if "等待取消" in request:
                 self.waiting.set()
@@ -205,7 +216,18 @@ def verify(binary):
                     tty.prompt()
                 if shutil.which("ssh"):
                     tty.command("ssh -V", "OpenSSH_")
+                for request, expected in [("错误401", "model authentication failed"), ("错误429", "model rate limited"), ("错误503", "model service unavailable"), ("错误504", "model request timed out"), ("协议错误", "model protocol incompatible")]:
+                    count = len(MockModel.requests)
+                    tty.send(":ai " + request + "\r")
+                    tty.until(expected)
+                    assert b"PRIVATE_REMOTE_BODY" not in tty.data and b"PRIVATE_INVALID_JSON" not in tty.data
+                    tty.finish(expected)
+                    assert len(MockModel.requests) == count + 1, "unexpected model retry"
+                    tty.command("printf 'ERROR_RECOVERED\\n'", "ERROR_RECOVERED\r\n")
                 tty.send(":ai 请演示批准\r")
+                tty.until("等待模型（第 1/8 轮）；Ctrl-C 取消")
+                tty.until("读取文件")
+                tty.until("等待确认")
                 tty.confirm_ready()
                 tty.send("y\r")
                 tty.until("APPROVED_RESULT\r\n")
@@ -233,8 +255,8 @@ def verify(binary):
                 tty.start_command(":ai 等待取消")
                 assert MockModel.waiting.wait(3)
                 tty.send("\x03")
-                tty.until("model request failed or was canceled", timeout=2)
-                tty.finish("model request failed or was canceled")
+                tty.until("model request canceled", timeout=2)
+                tty.finish("model request canceled")
                 # Move outside the fixed root and verify shell remains usable.
                 tty.command("cd /tmp; printf 'CWD_OK\\n'", "CWD_OK\r\n")
                 tty.command("pwd", "/tmp\r\n")
@@ -255,7 +277,7 @@ def verify(binary):
                 tty.prompt()
                 tty.command("echo OFFLINE_OK", "OFFLINE_OK\r\n")
                 tty.send(":ai 帮我查看项目\r")
-                tty.finish("model is not configured")
+                tty.finish("model configuration missing")
                 tty.command("echo STILL_USABLE", "STILL_USABLE\r\n")
                 tty.send(":exit\r")
                 assert tty.process.wait(3) == 0
