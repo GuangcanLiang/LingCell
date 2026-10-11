@@ -19,6 +19,9 @@ from verify_terminal import MockModel, Terminal
 
 
 REQUESTS = {
+    "route": "帮我解释PATH=/bin; touch ROUTE_MUST_NOT_RUN",
+    "route_path": "请解释/tmp/file",
+    "route_var": "帮我解释$PATH=/bin",
     "understand": "解释这个项目嵌套目录中的 entrypoint，并给出文件与行号。",
     "diagnose": "启动报错 expected service_port=9100，定位配置原因并运行验证。",
     "machine": "查看模拟机器的端口占用，取得实际状态后提出处理。",
@@ -79,6 +82,9 @@ class TaskModel(MockModel):
 
     def decide(self, scenario, results):
         step = len(results)
+        if scenario.startswith("route"):
+            assert step == 0
+            return self.completed("TASK_ROUTE_PREFIX: 已进入Agent，未执行输入。")
         if scenario in {"understand", "diagnose", "modify", "cancel"}:
             if step == 0:
                 return self.tool("search", "search_text", **(PORT_SEARCH if scenario == "diagnose" else SEARCH))
@@ -190,6 +196,12 @@ def verify(binary):
             tty = Terminal(binary, root, config)
             try:
                 tty.prompt()
+                for scenario in ("route", "route_path", "route_var"):
+                    before = len(TaskModel.requests)
+                    tty.send(REQUESTS[scenario] + "\r")
+                    tty.finish("TASK_ROUTE_PREFIX:")
+                    assert not (root / "ROUTE_MUST_NOT_RUN").exists()
+                    report(scenario, before, 0, "request prefix takes precedence over embedded paths/assignments")
                 before = len(TaskModel.requests)
                 # A local natural-language request uses the same Agent loop.
                 tty.send(REQUESTS["understand"] + "\r")

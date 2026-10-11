@@ -23,11 +23,15 @@ func TestRequestPunctuation(t *testing.T) {
 	r := Router{Knows: func(s string) bool { return s == "echo" || s == "ls" || s == "help" || s == "myalias" }}
 	cases := map[string]Kind{
 		"帮我解释 `$PATH`": Agent, "请解释 a; b": Agent,
+		"帮我解释PATH=/bin; echo ROUTE_MARKER": Agent,
+		"请解释/tmp/file":                     Agent, "解释LANG=zh_CN.UTF-8": Agent,
+		"帮我解释$PATH=/bin":        Agent,
 		"help me inspect $PATH": Shell, "please explain echo $(": Agent,
 		"can you explain a | b\nand c": Agent, "为什么 echo '": Agent,
 		"echo $PATH": Shell, "echo 中文; ls": Shell, "myalias $PATH": Shell,
 		"help me": Shell, "could you inspect $PATH": Agent, "FOO=中文": Shell, "FOO=$PATH missing": Shell,
 		"./script.sh $PATH": Shell, "/bin/echo 中文": Shell,
+		"./帮我查看 $PATH": Shell, "/tmp/请解释": Shell,
 		"if true; then echo 中文; fi": Shell, "for i in a; do": Incomplete,
 		"f() { echo 中文; }": Shell, "cat <<EOF\n中文": Incomplete,
 		"unknown $PATH": Ambiguous, "inspect `pwd`": Ambiguous,
