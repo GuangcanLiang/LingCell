@@ -37,8 +37,9 @@ type Reader struct {
 // Task tracks one task's read budget. A Task must not be shared by goroutines.
 // It borrows the Reader, which must remain open for all of the Task's operations.
 type Task struct {
-	reader *Reader
-	used   int
+	reader  *Reader
+	used    int
+	scanned int
 }
 
 // Data is bounded text returned to the model, with an explicit truncation flag.
@@ -273,11 +274,8 @@ func (t *Task) ReadFile(path string) (Data, error) {
 			b = b[:len(b)-1]
 		}
 	}
-	if bytes.ContainsRune(b, 0) || !utf8.Valid(b) {
-		return Data{}, errors.New("file is not UTF-8 text")
-	}
-	if bytes.Contains(b, []byte("PRIVATE KEY-----")) {
-		return Data{}, errors.New("private key content is excluded")
+	if err := textError(b); err != nil {
+		return Data{}, err
 	}
 	return t.finish(path, string(b), truncated)
 }
