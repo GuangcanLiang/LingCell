@@ -38,7 +38,7 @@ func TestRuntimeContext(t *testing.T) {
 		if c.OS != "linux" || c.Architecture != runtime.GOARCH || c.Kernel == "" || c.Kernel == "unknown" || c.Cwd != "/project" || c.ProjectRoot != root || (c.Privilege != "root" && c.Privilege != "non_root") || initial.Request != "explain $PATH" {
 			t.Fatalf("invalid context: %+v", initial)
 		}
-		if !reflect.DeepEqual(c.Tools, []string{"list_files", "read_file", "run_command"}) || strings.Contains(content, "private-environment-value") || strings.Contains(content, "LINGCELL_CONTEXT_SENTINEL") {
+		if !reflect.DeepEqual(c.Tools, []string{"list_files", "read_file", "search_text", "read_file_range", "run_command"}) || strings.Contains(content, "private-environment-value") || strings.Contains(content, "LINGCELL_CONTEXT_SENTINEL") {
 			t.Fatalf("unexpected runtime data: %s", content)
 		}
 	}
@@ -116,6 +116,16 @@ func (r *mockReader) ReadFile(p string) (project.Data, error) {
 func (r *mockReader) ListFiles(p string) (project.Data, error) {
 	r.reads = append(r.reads, p)
 	return project.Data{Path: p, Content: "main.go"}, nil
+}
+
+func (r *mockReader) SearchText(ctx context.Context, p, query string) (project.SearchData, error) {
+	r.reads = append(r.reads, p)
+	return project.SearchData{Path: p, Query: query, Matches: []project.Match{{Path: "nested/main.go", Line: 121, Text: "func entrypoint() {}"}}}, ctx.Err()
+}
+
+func (r *mockReader) ReadFileRange(ctx context.Context, p string, start, count int) (project.RangeData, error) {
+	r.reads = append(r.reads, p)
+	return project.RangeData{Path: p, StartLine: start, EndLine: start + count - 1, Content: "func entrypoint() {}"}, ctx.Err()
 }
 func call(id, name, args string) model.Message {
 	return model.Message{Role: "assistant", ToolCalls: []model.ToolCall{{ID: id, Type: "function", Function: model.FunctionCall{Name: name, Arguments: args}}}}
@@ -252,6 +262,57 @@ func TestProgressFailureStopsOperations(t *testing.T) {
 				if err != nil || !reflect.DeepEqual(events, want) {
 					t.Fatalf("progress: %+v %v", events, err)
 				}
+			}
+		})
+	}
+}
+
+func TestSearchRangeToolFeedback(t *testing.T) {
+	m := &mockModel{replies: []model.Message{
+		call("search", "search_text", `{"path":".","query":"entrypoint"}`),
+		call("range", "read_file_range", `{"path":"nested/main.go","start_line":121,"line_count":1}`),
+		call("default", "read_file_range", `{"path":"nested/main.go"}`),
+		{Role: "assistant", Content: "found nested/main.go:121"},
+	}}
+	r := &mockReader{}
+	s := &mockShell{}
+	a := Agent{Model: m, Reader: r, Shell: s}
+	if err := a.Run(context.Background(), "locate entrypoint", "/project"); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.reads) != 3 || len(s.commands) != 0 {
+		t.Fatal("read-only tools invoked shell or lost a call")
+	}
+	for i, id := range []string{"search", "range", "default"} {
+		msg := m.requests[i+1][len(m.requests[i+1])-1]
+		if msg.Role != "tool" || msg.ToolCallID != id {
+			t.Fatalf("wrong tool framing: %+v", msg)
+		}
+	}
+	var data project.RangeData
+	msg := m.requests[3][len(m.requests[3])-1]
+	if err := json.Unmarshal([]byte(msg.Content), &data); err != nil || data.StartLine != 1 || data.EndLine != 100 {
+		t.Fatalf("range defaults: %+v / %v", data, err)
+	}
+}
+
+func TestRangeParameterErrorsAreToolData(t *testing.T) {
+	for _, raw := range []string{
+		`{"path":"main.go","start_line":0}`, `{"path":"main.go","line_count":0}`,
+		`{"path":"main.go","line_count":201}`, `{"path":"main.go","start_line":-1}`,
+		`{"path":"main.go","line_count":null}`, `{"path":"main.go","start_line":"1"}`,
+		`{"path":"main.go","line_count":1.5}`,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			m := &mockModel{replies: []model.Message{call("range", "read_file_range", raw), {Role: "assistant", Content: "invalid range"}}}
+			r := &mockReader{}
+			a := Agent{Model: m, Reader: r, Shell: &mockShell{}}
+			if err := a.Run(context.Background(), "read", "/project"); err != nil {
+				t.Fatal(err)
+			}
+			msg := m.requests[1][len(m.requests[1])-1]
+			if msg.Role != "tool" || !strings.Contains(msg.Content, `"error"`) || len(r.reads) != 0 {
+				t.Fatalf("invalid parameters were not tool errors: %+v", msg)
 			}
 		})
 	}
