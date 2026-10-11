@@ -3,6 +3,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -20,6 +21,7 @@ import (
 	"lingcell/internal/model"
 	"lingcell/internal/project"
 	"lingcell/internal/router"
+	"lingcell/internal/runtime"
 	"lingcell/internal/shell"
 )
 
@@ -28,6 +30,8 @@ import (
 // The caller owns Shell and Reader and closes them after Run. Model may report
 // missing configuration while normal shell commands remain available.
 type App struct {
+	Runtime      *runtime.Runtime
+	RuntimeError error
 	Shell        *shell.Session
 	Reader       *project.Reader
 	Model        model.Client
@@ -92,7 +96,7 @@ func (a *App) Init(noHistory bool) error {
 					matches = append(matches, name)
 				}
 			}
-			for _, name := range append(a.Shell.Names(), ":ai", ":sh", ":fix", ":help", ":exit") {
+			for _, name := range append(a.Shell.Names(), ":ai", ":sh", ":fix", ":help", ":exit", ":session", ":context", ":memory") {
 				if strings.HasPrefix(name, prefix) && !strings.HasPrefix(name, "__lc_") {
 					matches = append(matches, name)
 				}
@@ -140,11 +144,14 @@ func (a *App) Init(noHistory bool) error {
 		if err := f.Close(); err != nil {
 			return fmt.Errorf("close history file: %w", err)
 		}
+		if err := os.Chmod(a.Config.HistoryFile, 0600); err != nil {
+			return err
+		}
 		history, err := readline.NewHistoryFromFile(a.Config.HistoryFile)
 		if err != nil {
 			return err
 		}
-		a.Editor.History.Add("input", history)
+		a.Editor.History.Add("input", redactedHistory{History: history, secret: os.Getenv(a.Config.APIKeyEnv)})
 	}
 	return nil
 }
@@ -210,9 +217,21 @@ func (a *App) task(ctx context.Context, fn func(context.Context) error) error {
 // ask starts an Agent with a fresh read budget and sanitized explanatory output.
 // Any prior user-command result stays tool data for diagnosis, not instructions.
 func (a *App) ask(ctx context.Context, request string, previous ...shell.Result) error {
+	if a.RuntimeError != nil {
+		return fmt.Errorf("runtime unavailable; shell remains usable: %w", a.RuntimeError)
+	}
 	return a.task(ctx, func(ctx context.Context) error {
-		runner := agent.Agent{Model: a.Model, Shell: a.Shell, Reader: a.Reader.NewTask(), Confirm: a.confirm, Output: modelOutput{a.Output}, Notify: a.progress, MaxDecisions: a.Config.MaxDecisions, Timeout: time.Duration(a.Config.TimeoutSeconds) * time.Second}
-		return runner.Run(ctx, request, a.Reader.Root, previous...)
+		runner := agent.Agent{Runtime: a.Runtime, Model: a.Model, Shell: a.Shell, Reader: a.Reader.NewTask(), Confirm: a.confirm, Output: modelOutput{a.Output}, Notify: a.progress, MaxDecisions: a.Config.MaxDecisions, Timeout: time.Duration(a.Config.TimeoutSeconds) * time.Second}
+		err := runner.Run(ctx, request, a.Reader.Root, previous...)
+		if err == nil && a.Runtime != nil {
+			added, updated, memoryErr := a.Runtime.ExtractMemory(ctx, a.Model)
+			if memoryErr != nil {
+				_ = a.status("记忆提取失败；任务已完成，不自动重试。")
+			} else if added+updated > 0 {
+				_ = a.status(fmt.Sprintf("长期记忆：新增 %d，更新 %d。", added, updated))
+			}
+		}
+		return err
 	})
 }
 
@@ -221,14 +240,60 @@ func (a *App) ask(ctx context.Context, request string, previous ...shell.Result)
 // in the current Agent loop rather than recursively starting another task.
 func (a *App) execute(ctx context.Context, command string) error {
 	var result shell.Result
+	// Persistence failure cannot disable commands explicitly issued by the user.
+	recording := a.Runtime != nil
+	if recording {
+		initial, _ := json.Marshal(map[string]string{"request": "User-issued command (execute once): " + command})
+		if err := a.Runtime.Begin([]model.Message{{Role: "user", Content: string(initial)}}); err != nil {
+			_ = a.status("会话记录失败；普通 shell 继续可用。")
+			_ = a.Runtime.Finish(false)
+			recording = false
+		}
+	}
+	const commandID = "user_command"
+	if recording {
+		args, _ := json.Marshal(map[string]string{"command": command, "purpose": "explicit user input"})
+		err := a.Runtime.Append(model.Message{Role: "assistant", ToolCalls: []model.ToolCall{{ID: commandID, Type: "function", Function: model.FunctionCall{Name: "run_command", Arguments: string(args)}}}})
+		if err != nil {
+			_ = a.Runtime.Finish(false)
+			recording = false
+			_ = a.status("会话记录失败；普通 shell 继续可用。")
+		}
+	}
 	err := a.task(ctx, func(ctx context.Context) error {
 		if err := a.progress(agent.Progress{Stage: agent.ExecutingCommand}); err != nil {
 			return err
+		}
+		if recording {
+			if saveErr := a.Runtime.ToolState(commandID, "started", true, ""); saveErr != nil {
+				_ = a.Runtime.Finish(false)
+				recording = false
+				_ = a.status("会话记录失败；普通 shell 继续可用。")
+			}
 		}
 		var err error
 		result, err = a.Shell.Run(ctx, command)
 		return err
 	})
+	if recording {
+		status := "completed"
+		if err != nil {
+			status = "unknown"
+		}
+		raw, _ := json.Marshal(result)
+		saveErr := a.Runtime.ToolState(commandID, status, true, string(raw))
+		if saveErr == nil && err == nil {
+			msg := model.Message{Role: "tool", ToolCallID: commandID, Content: string(raw)}
+			saveErr = a.Runtime.Append(msg)
+			if saveErr == nil {
+				saveErr = a.Runtime.ObserveEvidence(msg)
+			}
+		}
+		finishErr := a.Runtime.Finish(err == nil && saveErr == nil)
+		if saveErr != nil || finishErr != nil {
+			_ = a.status("会话记录失败；普通 shell 继续可用。")
+		}
+	}
 	if err != nil {
 		return err
 	}
@@ -257,6 +322,15 @@ func (a *App) fix(ctx context.Context) error {
 // ctx cancellation is observed between inputs and by active tasks; an idle
 // Readline call is controlled by terminal interrupts rather than ctx alone.
 func (a *App) Run(ctx context.Context) error {
+	if a.Runtime != nil {
+		_ = a.status("当前会话：" + a.Runtime.Session.ID)
+		if text := a.Runtime.Interrupted(); text != "" {
+			_ = a.status(text)
+		}
+	}
+	if a.RuntimeError != nil {
+		_ = a.status("会话存储不可用；Agent 停止，普通 shell 继续可用。")
+	}
 	fmt.Fprintln(a.Output, "LingCell — :help 查看帮助；:ai 请求 Agent；:sh 强制 Bash。")
 	for {
 		if err := ctx.Err(); err != nil {
@@ -286,7 +360,13 @@ func (a *App) Run(ctx context.Context) error {
 		case input == ":exit":
 			return nil
 		case input == ":help":
-			fmt.Fprintln(a.Output, ":ai <需求>  请求 Agent\n:sh <命令>  强制 Bash 路由\n:fix        诊断上一条命令\n:exit       退出\n普通命令直接运行；Agent 命令必须确认；Ctrl-C 取消；Ctrl-Z 暂停前台作业，jobs/fg/bg 管理作业。")
+			fmt.Fprintln(a.Output, ":ai <需求>  请求 Agent\n:sh <命令>  强制 Bash 路由\n:fix        诊断上一条命令\n:session list/new/resume/show/delete  会话管理\n:context    请求字节预算及摘要覆盖\n:memory list/show/add/update/forget  记忆管理\n:exit       退出\n普通命令直接运行；Agent 命令必须确认；Ctrl-C 取消；Ctrl-Z 暂停前台作业，jobs/fg/bg 管理作业。")
+		case input == ":context":
+			err = a.showContext()
+		case strings.HasPrefix(input, ":session"):
+			err = a.sessionCommand(input)
+		case strings.HasPrefix(input, ":memory"):
+			err = a.memoryCommand(input)
 		case input == ":fix":
 			err = a.fix(ctx)
 		case strings.HasPrefix(input, ":ai "):
@@ -358,4 +438,14 @@ func (a *App) progress(p agent.Progress) error {
 		return a.status("执行命令")
 	}
 	return nil
+}
+
+// redactedHistory filters persisted input, leaving executed input unchanged.
+type redactedHistory struct {
+	readline.History
+	secret string
+}
+
+func (h redactedHistory) Write(line string) (int, error) {
+	return h.History.Write(runtime.Redact(line, h.secret))
 }

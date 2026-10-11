@@ -216,7 +216,14 @@ func (r *Runtime) Interrupted() string {
 }
 
 // History returns a bounded page including original message/step archives.
-func (r *Runtime) History(start, count int) (any, error) {
+func (r *Runtime) History(start, count int, offsets ...int) (any, error) {
+	offset := 0
+	if len(offsets) > 0 {
+		offset = offsets[0]
+	}
+	if offset < 0 || offset > maxTurnBytes || (offset > 0 && count != 1) {
+		return nil, errors.New("invalid history offset; use count=1 for fragments")
+	}
 	if start < 1 || count < 1 || count > 20 {
 		return nil, errors.New("history requires start_turn >= 1 and count between 1 and 20")
 	}
@@ -238,28 +245,28 @@ func (r *Runtime) History(start, count int) (any, error) {
 		}
 		p.Turns = append(p.Turns, t)
 		b, _ := json.Marshal(p)
-		if len(b) > 32*1024 {
+		if len(b) > 32*1024 || offset > 0 {
 			p.Turns = p.Turns[:len(p.Turns)-1]
 			p.Truncated = true
 			p.Next = t.Number
-			if len(p.Turns) == 0 { // One large turn: return its bounded tool-data projection plus an archive reference.
-				copyTurn := t
-				// This is archive data inside a tool result, not protocol messages.
-				// Limit even a turn with many large messages/calls.
-				copyTurn.Messages = nil
-				copyTurn.Steps = nil
-				for _, m := range t.Messages {
-					m.Content = clip(m.Content, 512) + " [excerpt; :session show for full archive]"
-					m.ToolCalls = nil
-					copyTurn.Messages = append(copyTurn.Messages, m)
-					raw, _ := json.Marshal(copyTurn)
-					if len(raw) > 28*1024 {
-						copyTurn.Messages = copyTurn.Messages[:len(copyTurn.Messages)-1]
+			if len(p.Turns) == 0 {
+				raw, _ := json.Marshal(t)
+				if offset >= len(raw) {
+					return nil, errors.New("history offset exceeds turn archive")
+				}
+				fragment := clip(string(raw[offset:]), 16*1024)
+				page := map[string]any{"turn": t.Number, "reference": r.Session.ID, "record_fragment": fragment, "offset": offset, "next_offset": offset + len(fragment), "more": offset+len(fragment) < len(raw), "truncated": true}
+				for {
+					encoded, _ := json.Marshal(page)
+					if len(encoded) <= 32*1024 {
 						break
 					}
+					fragment = clip(fragment, len(fragment)/2)
+					page["record_fragment"] = fragment
+					page["next_offset"] = offset + len(fragment)
+					page["more"] = true
 				}
-				p.Turns = []Turn{copyTurn}
-				p.Next = t.Number + 1
+				return page, nil
 			}
 			break
 		}

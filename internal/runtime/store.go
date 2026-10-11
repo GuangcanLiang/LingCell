@@ -166,14 +166,17 @@ func newID() (string, error) {
 
 var sensitive = regexp.MustCompile(`(?i)(-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*|(?:sk-[A-Za-z0-9_-]{8,}|AKIA[A-Z0-9]{16})|(?:authorization\s*[:=]\s*bearer\s+\S+)|(?:api[_-]?key|password|secret|token)\s*[:=]\s*["']?[^\s"',;]+)`)
 
-func (s *Store) clean(text string) string {
-	for _, secret := range s.secrets {
+// Redact filters known credential values and recognizable sensitive patterns.
+// It cannot identify arbitrary secrets. Execution arguments must stay unmodified.
+func Redact(text string, secrets ...string) string {
+	for _, secret := range secrets {
 		if secret != "" {
 			text = strings.ReplaceAll(text, secret, "[REDACTED]")
 		}
 	}
 	return sensitive.ReplaceAllString(text, "[REDACTED]")
 }
+func (s *Store) clean(text string) string { return Redact(text, s.secrets...) }
 func (s *Store) saveTurn(id string, t Turn) error {
 	// Copy before redaction: execution still uses the original validated arguments.
 	raw, err := json.Marshal(t)
