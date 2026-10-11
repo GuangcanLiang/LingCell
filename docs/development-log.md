@@ -2,6 +2,21 @@
 
 记录已完成的工作与实际验证，按日期及主题倒序排列。日期使用 Asia/Shanghai 时区；架构与日常约定见 [AGENT.md](../AGENT.md)。
 
+## 2026-10-11: 三会话终端验收与最低工具链准备
+
+### 目标与改动
+
+第三批可独立完成的本地验收设施在 `test/terminal-daily`、`.worktrees/terminal-daily` 实施，基线 `6ad5b17ba8d93d98b5b74f8bcbcc64d97a6b734d`。第二批仍因缺服务配置与授权阻塞，检查点保存在 `feat/live-model-validation`，未合入。
+
+- PTY 脚本分别报告通过、失败与跳过，缺 vim/top/ssh 不再被笼统 PASS 覆盖，`ssh -V` 与成功远程连接分开。
+- 第三个独立 CLI 进程检查新 Bash 状态隔离、持久变量、多行、作业控制、Agent 取消后恢复和退出终端状态；自动会话不能替代用户真实日常试用。
+- 新增显式 `--ssh-target` 和 `--bashrc`：前者只使用既有认证/known_hosts，检查远端只读握手、缩放、中断与本地输入归还；后者在临时 HOME 加载指定配置。私密会话错误不打印原始输出，临时目录清理。
+- Go 官方发行清单与归档下载到 `/tmp`，Go 1.26.0 Linux/amd64 归档 SHA256 `aac1b08a0fb0c4e0a7c1555beb7b59180b05dfc5a3d62e40e9de90cd42f88235` 校验相符，工具路径 `/tmp/lingcell-go126/go/bin/go`。不替换系统工具链、不更改依赖。
+
+### 验证状态与范围
+
+开发侧 Python 源码编译（不写缓存）和 `git diff --check` 通过。候选 `e960692de1382a1c1d460bfae448fab4a2359afe` 经独立 `terminal_daily_acceptance` Agent 在 detached worktree 验收，本地设施 **PASS**，详见 [交接报告](handoffs/terminal-daily.md)。Go 1.27.2 / 1.26.0 均固定 `GOTOOLCHAIN=local`，各自 `make check`、有效 `make lint`（5,456 / 5,360 条记录、8 实际包）、`make build`、`make terminal` 全部退出 0；三独立 CLI 自动会话、缺工具 SKIP、合成 bashrc/SSH CLI 参数路径与失败脱敏通过。初次本地监听受沙箱限制，按权限流程重跑；测试开始/结束候选相同，源码干净，仅忽略 bin/。真实远程 SSH、个人配置和人工三会话日常试用尚未完成，完整第三批仍 **BLOCKED/未完成**；本地函数 fixture 不证明真实 SSH 网络、认证、raw 模式或远端 PTY。后续仅追加证据文档，合入范围限于已独立通过的本地设施。
+
 ## 2026-10-11: 交互阶段、模型错误与离线诊断
 
 ### 目标与改动

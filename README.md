@@ -111,7 +111,20 @@ make terminal
 
 Go 测试使用模拟模型与本地 HTTP 服务，覆盖 Bash 状态、个人钩子、长命令、多行及 heredoc、输出截断、取消和作业控制、路由、文件越界及 `.gitignore`、读取预算、工具反馈、拒绝、参数错误、超时与循环上限。`make check` 检查 `gofmt`、`go mod tidy -diff`，再运行 `go vet` 和竞态测试。`make lint` 运行 Staticcheck，安装方法见维护指南；`make terminal` 会先构建 CLI，再执行 PTY 验收。
 
-PTY 验收脚本需要 Python 3 标准库，启动临时 HOME 和本地模拟模型，通过真实 CLI 验证输入编辑、续行、Ctrl-C/Z、`bg/fg`、缩放、Agent 确认/拒绝、错误诊断、分类、模型取消、历史与退出终端恢复。系统安装了 `vim` / `top` 时还会实际启动它们。脚本不使用真实供应商或远程 SSH 主机；成功的远程 SSH 会话及真实供应商工具调用需选定服务后联调。
+PTY 验收脚本需要 Python 3 标准库，启动临时 HOME 和本地模拟模型，通过真实 CLI 验证输入编辑、续行、Ctrl-C/Z、`bg/fg`、缩放、Agent 确认/拒绝、错误诊断、分类、模型取消、历史与退出终端恢复。系统安装了 `vim` / `top` 时还会实际启动它们。脚本不使用真实供应商或远程 SSH 主机；成功的远程 SSH 会话及真实供应商工具调用需选定服务后联调。验收会分别打印 `PASS` / `FAIL` / `SKIP`；默认运行三个独立 CLI 会话，缺少 vim/top/ssh 时明确跳过，只运行 `ssh -V` 不表示远程连接已验证。
+
+可选测试需要用户指定并授权目标或配置：
+
+```bash
+# 使用已授权目标、既有非交互认证与 known_hosts；不接受新主机指纹。
+python3 scripts/verify_terminal.py --binary bin/lingcell --ssh-target user@host
+# 加载已授权个人配置；bashrc 的本地钩子会实际执行。
+python3 scripts/verify_terminal.py --binary bin/lingcell --bashrc "$HOME/.bashrc"
+# 固定最低版本，防止 Go 自动切换到更新工具链。
+GOTOOLCHAIN=local make check GO=/path/to/go1.26.0/bin/go
+```
+
+SSH 检查通过远端只读 sh 握手验证输入、窗口缩放、Ctrl-C 及退出后本地输入恢复；不写远端文件。个人 bashrc 会复制到临时 HOME，在三次会话中加载；依赖 `$HOME` 中其他文件的配置可能需要额外准备。这是隔离环境兼容测试，不代表原始 HOME 下所有插件已验证。个人配置与 SSH 模式失败时不输出原始终端片段，临时目录退出后清理。报告只记录结果；真实服务/远程环境或个人配置未运行时仍明确列为未验证。
 
 ## 开发与维护
 
