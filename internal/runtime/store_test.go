@@ -164,3 +164,19 @@ func TestDiskFullRejectsArchiveWrite(t *testing.T) {
 		t.Fatal("failed transaction changed original record", err)
 	}
 }
+
+func TestJSONCredentialFieldsRedactedWithoutBreakingArchive(t *testing.T) {
+	input := `{"content":"{\"password\":\"json-private-sentinel\"}","authorization":"Bearer synthetic-private","path":"safe.json"}`
+	result := Redact(input)
+	if strings.Contains(result, "json-private-sentinel") || strings.Contains(result, "synthetic-private") {
+		t.Fatal("JSON credential field retained")
+	}
+	var decoded any
+	if err := json.Unmarshal([]byte(result), &decoded); err != nil {
+		t.Fatal("redaction broke JSON", err)
+	}
+	ordinary := `{"api_key_env":"CONFIGURED_ENV_NAME","token_count":12,"runtime_context":{"request":"preserve this"}}`
+	if Redact(ordinary) != ordinary {
+		t.Fatal("safe metadata changed")
+	}
+}

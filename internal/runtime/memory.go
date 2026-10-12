@@ -64,7 +64,9 @@ func (r *Runtime) owner(scope string) string {
 	return ""
 }
 
-var forbiddenMemory = regexp.MustCompile(`(?i)(无需确认|不需确认|不用确认|免确认|授权|以后.*执行|无需询问|no.*confirm|without.*approv|always.*approv|authorization|password|credential|api[_ -]?key|secret|token|端口.*占用|disk.*free|free.*disk|running.*process|进程|磁盘剩余|port.*(?:busy|open|listen))`)
+var forbiddenMemory = regexp.MustCompile(`(?i)(无需确认|不需确认|不用确认|免确认|授权|以后.*执行|无需询问|no.*confirm|without.*(?:approv|confirm|consent)|skip.*confirm|never.*ask|permission|authorized|always.*approv|authorization|password|credential|api[_ -]?key|secret|token|端口.*占用|disk.*free|free.*disk|running.*process|进程|磁盘剩余|port.*(?:busy|open|listen))`)
+
+var authorityMemory = regexp.MustCompile(`(?i)(无需确认|不需确认|不用确认|免确认|授权|无需询问|no.*confirm|without.*(?:approv|confirm|consent)|skip.*confirm|never.*ask|permission|authorized|always.*approv|authorization)`)
 
 func (r *Runtime) validateMemory(m Memory, manual bool) error {
 	if r.owner(m.Scope) == "" || len(m.Topic) == 0 || len(m.Topic) > 128 || len(m.Content) == 0 || len(m.Content) > 2048 || !utf8.ValidString(m.Content) {
@@ -87,6 +89,9 @@ func (r *Runtime) validateMemory(m Memory, manual bool) error {
 		return errors.New("invalid memory source message")
 	}
 	msg := t.Messages[m.Source.Message]
+	if forbiddenMemory.MatchString(m.Source.Quote) {
+		return errors.New("memory source contains sensitive, transient or authorization evidence")
+	}
 	if m.Source.Quote == "" || len(m.Source.Quote) > 2048 || r.Store.clean(m.Source.Quote) != m.Source.Quote || !strings.Contains(msg.Content, m.Source.Quote) {
 		return errors.New("memory evidence quote not found")
 	}
@@ -98,12 +103,15 @@ func (r *Runtime) validateMemory(m Memory, manual bool) error {
 		if msg.Role != "user" || json.Unmarshal([]byte(msg.Content), &initial) != nil || !strings.Contains(initial.Request, m.Source.Quote) || m.Source.ToolID != "" {
 			return errors.New("preference must cite explicit user text")
 		}
-		preference := regexp.MustCompile(`(?i)(prefer|please.*(?:use|answer|respond|keep)|always.*(?:use|answer|respond)|i (?:like|want)|偏好|喜欢|请.*(?:使用|用|回答|回复)|以后.*(?:用|回答|回复))`)
+		if authorityMemory.MatchString(initial.Request) {
+			return errors.New("user authority promises cannot become memory")
+		}
+		preference := regexp.MustCompile(`(?i)(prefer|please.*(?:use|answer|respond|keep)|always.*(?:use|answer|respond)|i (?:like|want)|^(?:use|answer|respond|keep)\b|(?:用|使用).*(?:回答|回复)|(?:回答|回复).*(?:用|简短|详细)|偏好|喜欢|请.*(?:使用|用|回答|回复)|以后.*(?:用|回答|回复))`)
 		if !preference.MatchString(m.Source.Quote) {
 			return errors.New("preference lacks explicit preference evidence")
 		}
 	} else {
-		if regexp.MustCompile(`(?i)(请记住|please remember|remember that|ignore previous|ignore instructions|无需确认)`).MatchString(m.Source.Quote) {
+		if regexp.MustCompile(`(?i)(请记住|please remember|remember that|ignore previous|ignore instructions|无需确认)`).MatchString(msg.Content) {
 			return errors.New("tool instructions cannot become a memory fact")
 		}
 		if msg.Role != "tool" || msg.ToolCallID != m.Source.ToolID {
@@ -185,7 +193,7 @@ func (r *Runtime) SaveMemory(m Memory, manual bool) (bool, error) {
 		t := r.Turns[m.Source.Turn-1]
 		for _, step := range t.Steps {
 			if step.ID == m.Source.ToolID {
-				m.Source.EvidenceKey = digest(step.Name + "\n" + r.Store.clean(step.Arguments))
+				m.Source.EvidenceKey = evidenceKey(step.Name, r.Store.clean(step.Arguments))
 				m.Source.EvidenceHash = digest(r.Store.clean(t.Messages[m.Source.Message].Content))
 			}
 		}
@@ -517,7 +525,7 @@ func (r *Runtime) ObserveEvidence(msg model.Message) (err error) {
 	if step == nil || step.Status != "completed" || (step.Name != "read_file" && step.Name != "read_file_range" && step.Name != "search_text" && step.Name != "run_command") {
 		return nil
 	}
-	key := digest(step.Name + "\n" + r.Store.clean(step.Arguments))
+	key := evidenceKey(step.Name, r.Store.clean(step.Arguments))
 	hash := digest(r.Store.clean(msg.Content))
 	if err = r.expireMemory(); err != nil {
 		return err
@@ -555,4 +563,17 @@ func (r *Runtime) ObserveEvidence(msg model.Message) (err error) {
 		}
 	}
 	return tx.Commit()
+}
+
+// evidenceKey canonicalizes JSON parameters so formatting cannot hide a change.
+func evidenceKey(name, args string) string {
+	var parameters any
+	decoder := json.NewDecoder(strings.NewReader(args))
+	decoder.UseNumber()
+	if decoder.Decode(&parameters) == nil {
+		if raw, err := json.Marshal(parameters); err == nil {
+			args = string(raw)
+		}
+	}
+	return digest(name + "\n" + args)
 }

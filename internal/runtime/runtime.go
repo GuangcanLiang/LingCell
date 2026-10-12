@@ -258,7 +258,29 @@ func (r *Runtime) History(start, count int, offsets ...int) (any, error) {
 		Reference string `json:"reference"`
 	}
 	p := page{Reference: r.Session.ID}
-	for _, t := range r.Turns {
+	archive := r.Turns
+	if r.active != nil {
+		var current Turn
+		if r.Store != nil {
+			var raw string
+			if err := r.Store.db.QueryRow("SELECT record FROM turns WHERE session=? AND number=?", r.Session.ID, r.active.Number).Scan(&raw); err != nil {
+				r.fault = err
+				return nil, err
+			}
+			if err := json.Unmarshal([]byte(raw), &current); err != nil {
+				r.fault = err
+				return nil, err
+			}
+		} else {
+			raw, _ := json.Marshal(r.active)
+			if err := json.Unmarshal(raw, &current); err != nil {
+				return nil, err
+			}
+		}
+		// A snapshot goes inside tool data, never into executable protocol calls.
+		archive = append(append([]Turn(nil), archive...), current)
+	}
+	for _, t := range archive {
 		if t.Number < start {
 			continue
 		}

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -169,13 +170,68 @@ var sensitive = regexp.MustCompile(`(?i)(-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S
 // Redact filters known credential values and recognizable sensitive patterns.
 // It cannot identify arbitrary secrets. Execution arguments must stay unmodified.
 func Redact(text string, secrets ...string) string {
+	return redactText(text, secrets, 0)
+}
+
+var credentialField = regexp.MustCompile(`(?i)^(?:api[_-]?key|password|secret|token|authorization)$`)
+
+func redactText(text string, secrets []string, depth int) string {
 	for _, secret := range secrets {
 		if secret != "" {
 			text = strings.ReplaceAll(text, secret, "[REDACTED]")
 		}
 	}
+	if depth < 16 {
+		var value any
+		decoder := json.NewDecoder(strings.NewReader(text))
+		decoder.UseNumber()
+		if decoder.Decode(&value) == nil {
+			var extra any
+			if decoder.Decode(&extra) == io.EOF {
+				cleaned, changed := redactValue(value, secrets, depth+1)
+				if !changed {
+					return text
+				}
+				raw, err := json.Marshal(cleaned)
+				if err == nil {
+					return string(raw)
+				}
+			}
+		}
+	}
 	return sensitive.ReplaceAllString(text, "[REDACTED]")
 }
+func redactValue(value any, secrets []string, depth int) (any, bool) {
+	changed := false
+	switch v := value.(type) {
+	case map[string]any:
+		for key, field := range v {
+			if text, ok := field.(string); ok && text != "" && credentialField.MatchString(key) {
+				v[key] = "[REDACTED]"
+				changed = true
+				continue
+			}
+			cleaned, different := redactValue(field, secrets, depth)
+			if different {
+				v[key] = cleaned
+				changed = true
+			}
+		}
+	case []any:
+		for i, field := range v {
+			cleaned, different := redactValue(field, secrets, depth)
+			if different {
+				v[i] = cleaned
+				changed = true
+			}
+		}
+	case string:
+		text := redactText(v, secrets, depth)
+		return text, text != v
+	}
+	return value, changed
+}
+
 func (s *Store) clean(text string) string { return Redact(text, s.secrets...) }
 func (s *Store) saveTurn(id string, t Turn) error {
 	// Copy before redaction: execution still uses the original validated arguments.

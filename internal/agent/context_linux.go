@@ -1,11 +1,12 @@
 package agent
 
 import (
-	"lingcell/internal/model"
 	"os"
 	"runtime"
 
 	"golang.org/x/sys/unix"
+
+	"lingcell/internal/model"
 )
 
 // runtimeContext contains program-generated facts, never environment values,
