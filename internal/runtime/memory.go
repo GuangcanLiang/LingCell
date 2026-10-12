@@ -119,7 +119,7 @@ func (r *Runtime) validateMemory(m Memory, manual bool) error {
 		}
 		valid := false
 		for _, step := range t.Steps {
-			if step.ID == m.Source.ToolID && step.Status == "completed" && (step.Name == "read_file" || step.Name == "read_file_range" || step.Name == "list_files" || step.Name == "search_text" || step.Name == "run_command") {
+			if step.ID == m.Source.ToolID && step.Status == "completed" && evidenceTool(step.Name) {
 				valid = true
 				if m.Scope == "machine" && (step.Name != "run_command" || strings.Contains(step.Arguments, "ssh ") || strings.Contains(step.Arguments, "docker ")) {
 					valid = false
@@ -522,7 +522,7 @@ func (r *Runtime) ObserveEvidence(msg model.Message) (err error) {
 			step = &r.active.Steps[i]
 		}
 	}
-	if step == nil || step.Status != "completed" || (step.Name != "read_file" && step.Name != "read_file_range" && step.Name != "search_text" && step.Name != "run_command") {
+	if step == nil || step.Status != "completed" || !evidenceTool(step.Name) {
 		return nil
 	}
 	key := evidenceKey(step.Name, r.Store.clean(step.Arguments))
@@ -576,4 +576,14 @@ func evidenceKey(name, args string) string {
 		}
 	}
 	return digest(name + "\n" + args)
+}
+
+// evidenceTool is shared by provenance validation and evidence invalidation so
+// every tool allowed to establish a fact can also make that fact stale.
+func evidenceTool(name string) bool {
+	switch name {
+	case "list_files", "read_file", "read_file_range", "search_text", "run_command":
+		return true
+	}
+	return false
 }

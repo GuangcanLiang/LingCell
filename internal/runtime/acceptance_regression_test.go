@@ -132,3 +132,44 @@ func TestAcceptanceAuthorityPrefixOmission(t *testing.T) {
 		t.Fatal("omitting authority suffix bypassed provenance validation")
 	}
 }
+
+// TestAcceptanceListEvidenceInvalidation checks the directory-list evidence
+// path, which must have the same invalidation contract as file-content tools.
+func TestAcceptanceListEvidenceInvalidation(t *testing.T) {
+	r := testRuntime(t, testStore(t))
+	observe := func(args, content string) {
+		if err := r.Begin([]model.Message{{Role: "user", Content: `{"request":"inspect project"}`}}); err != nil {
+			t.Fatal(err)
+		}
+		c := model.ToolCall{ID: "listing", Type: "function", Function: model.FunctionCall{Name: "list_files", Arguments: args}}
+		if err := r.Append(model.Message{Role: "assistant", ToolCalls: []model.ToolCall{c}}); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.ToolState(c.ID, "completed", false, ""); err != nil {
+			t.Fatal(err)
+		}
+		msg := model.Message{Role: "tool", ToolCallID: c.ID, Content: content}
+		if err := r.Append(msg); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.ObserveEvidence(msg); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.Finish(true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	observe(`{"path":"."}`, `{"path":".","content":"Makefile\n","truncated":false}`)
+	m := Memory{Scope: "project", Kind: "fact", Topic: "build-files", Content: "Project includes Makefile", Source: Source{Session: r.Session.ID, Turn: 1, Message: 2, ToolID: "listing", Quote: "Makefile"}}
+	if _, err := r.SaveMemory(m, false); err != nil {
+		t.Fatal(err)
+	}
+	observe(`{ "path" : "." }`, `{"path":".","content":"go.mod\n","truncated":false}`)
+	all, err := r.ListMemory("project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1 || all[0].Status != "pending_verification" {
+		t.Fatal("changed directory listing left stale fact valid")
+	}
+}
