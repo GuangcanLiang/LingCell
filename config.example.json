@@ -3,5 +3,6 @@
   "model": "your-tool-calling-model",
   "api_key_env": "LINGCELL_API_KEY",
   "max_decisions": 8,
-  "timeout_seconds": 60
+  "timeout_seconds": 60,
+  "context_max_bytes": 131072
 }

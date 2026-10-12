@@ -24,3 +24,4 @@ check: fmt-check mod-check vet test-race
 terminal: build
 	python3 scripts/verify_terminal.py --binary bin/lingcell
 	python3 scripts/verify_tasks.py --binary bin/lingcell
+	python3 scripts/verify_runtime.py --binary bin/lingcell

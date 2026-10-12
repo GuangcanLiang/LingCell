@@ -34,11 +34,21 @@ class MockModel(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        if not body.get("tools") and body["messages"][0]["content"].startswith("Extract at most"):
+            payload = json.dumps({"choices": [{"message": {"role": "assistant", "content": '{"memories":[]}'}, "finish_reason": "stop"}]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         self.requests.append(body)
         messages = body["messages"]
         if not body.get("tools"):
             answer = {"role": "assistant", "content": '{"kind":"shell"}'}
         else:
+            current = max(i for i, m in enumerate(messages) if m["role"] == "user" and "runtime_context" in json.loads(m["content"]))
+            messages = [messages[0]] + messages[current:]
             request = json.loads(messages[1]["content"])["request"]
             if request.startswith("错误"):
                 status = int(request.removeprefix("错误"))
@@ -82,19 +92,19 @@ class MockModel(http.server.BaseHTTPRequestHandler):
 
 
 class Terminal:
-    def __init__(self, binary, root, config, private=False):
+    def __init__(self, binary, root, config, private=False, flags=()):
         self.private = private
         self.master, self.slave = os.openpty()
         fcntl.ioctl(self.slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
         self.original = termios.tcgetattr(self.slave)
         self.data = b""
-        env = dict(os.environ, HOME=str(root), XDG_CACHE_HOME=str(root / ".cache"), TERM="xterm-256color", PATH="/usr/bin:/bin")
+        env = dict(os.environ, HOME=str(root), XDG_CACHE_HOME=str(root / ".cache"), XDG_STATE_HOME=str(root / ".state"), TERM="xterm-256color", PATH="/usr/bin:/bin")
 
         def setup():
             os.setsid()
             fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
-        self.process = subprocess.Popen([str(binary), "--config", str(config)], stdin=self.slave, stdout=self.slave, stderr=self.slave, cwd=root, env=env, preexec_fn=setup)
+        self.process = subprocess.Popen([str(binary), "--config", str(config), *flags], stdin=self.slave, stdout=self.slave, stderr=self.slave, cwd=root, env=env, preexec_fn=setup)
 
     def send(self, text):
         self.data = b""

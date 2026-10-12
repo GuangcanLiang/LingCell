@@ -2,6 +2,45 @@
 
 记录已完成的工作与实际验证，按日期及主题倒序排列。日期使用 Asia/Shanghai 时区；架构与日常约定见 [AGENT.md](../AGENT.md)。
 
+## 2026-10-12: Agent runtime 独立验收缺陷修复
+
+首轮候选 `a95ba7a381e1e90f020addd15625f721b06ecb2a` 被独立 overlay 探针确认五项失败：参数 JSON 格式差异未失效事实、来源引用授权和工具指令省略绕过、JSON 转义的已知凭据遗漏、当前大工具结果无法本轮回读。测试 Agent 因额度中断未形成完整报告，首轮未通过、未合入；已收到的独立证据与复现见 [runtime 交接](handoffs/agent-runtime.md)。
+
+`runtime` 修正来源检查与 JSON 过滤，证据参数规范化，History 加入已保存当前轮快照并保留分页/32 KiB 上限；调整工具说明与导入分组。独立五项探针审查后收录到 `acceptance_regression_test.go`，补充授权后缀省略回归。开发局部测试通过；修复后完整独立 Go/PTY/最低版本验收尚待运行。环境刷新后重新准备 `/tmp` Go 1.26.0；真实供应商、SSH、个人配置仍未调用。
+
+第二轮候选 `f382568120f0e7ced4f8900db39c56dee2a00a2a` 独立 **FAIL**：目录列表可以形成事实，但 `ObserveEvidence` 遗漏 list_files，目录变化后仍返回 valid。其余完整 Go1.27.2/最低Go1.26.0检查、Staticcheck、构建、PTY和独立来源/归档/故障探针通过；完整确切命令与限制保存到交接报告。修复统一证据工具集合并补目录 Data 回归，开发局部测试通过；第三轮新候选按下列结果独立验收。
+
+最终候选 `0f60a4148840a7308925a67b8806ff5d79ba9e7d` 全新上下文测试 Agent `/root/runtime_final_acceptance` 在对应 detached worktree 独立 **PASS**。Go1.27.2/最低Go1.26.0 的 make check、构建和模块校验均0；默认 Staticcheck/完整 make terminal 均0，新 runtime 实际分析测量2,360条。独立探针复测首轮五项、目录失效及五证据工具矩阵，另验证字节预算、保存门禁、来源/权限/隔离、迁移/只读/磁盘满和归档界限。确切环境/命令/范围/限制保存到交接报告；测试开始/结束 HEAD 一致、源码干净。最低版本 PTY 和真实服务不列为通过。
+
+验收后只追加此日志与交接证据，产品候选保持上述 SHA。main 仍为交接基线且干净；当前 origin 已连接 GitHub，远程 PR/推送按维护指南另需用户授权，因此实现先完整保存在已验收任务分支，未推送或改动 main。
+
+用户随后授权创建 PR；已推送任务分支并建立 [PR #1](https://github.com/GuangcanLiang/LingCell/pull/1)，以 main 为目标，附完整独立验收报告。发布后只追加此日志与交接记录，不改变受验代码；证据文档检查链接与 `git diff --check`，不重复应用测试。本次未合并 PR，main 保持基线。
+
+
+
+
+## 2026-10-11: Agent runtime 会话、上下文及长期记忆升级
+
+### 目标与分批实施
+
+基线 `e83f13e52e4029e819dfae194edf55024f23d807`，开发分支 `feat/agent-runtime`，独立 worktree `.worktrees/agent-runtime`。按用户要求用会话记录替代独立请求；恢复只加载历史，不恢复 Bash 状态或执行授权。
+
+第一批新增 `internal/runtime/store.go`：纯 Go SQLite 固定依赖 `modernc.org/sqlite v1.46.1`，版本化事务迁移、WAL + synchronous FULL、0700/0600 权限、进程独占会话锁，以及有界归档和已知凭据过滤。每轮记录最多 2 MiB、每会话最多 64 MiB，超限拒绝写入。`store_test.go` 覆盖迁移、权限、损坏/链接、写入故障、锁、边界及过滤不会修改执行参数。
+
+第二批新增 `runtime.go` / `context.go`：会话连续性、显式恢复与中断状态；完整记录和模型请求分离，按 `model.EncodeRequest` 计量，默认 128 KiB；分批摘要保留最近两轮，原始归档保留。未完成历史工具调用补齐状态结果且不执行；旧记录工具最多 32 KiB，大工具结果缩减附引用，无法满足预算则停止。开发局部回归覆盖恢复/隔离、工具配对、摘要成功/失败、字节预算和归档上限。
+
+第三批接入 `agent` / `app` / CLI：每轮新预算但沿用 runtime；命令写入开始/结果门禁、普通命令记录、会话/记忆管理、`--resume` / `--ephemeral`；新增 `memory.go` / 回归，含来源校验、版本、FTS5 trigram/短查询、范围隔离、冲突/过期与重新观察证据失效。提取一次有界请求，失败不影响任务。输入历史过滤已知凭据，不修改实际执行参数。维护指南同步解除旧“不保存上下文/无跨会话记忆”边界，新增 [runtime 说明](runtime.md)。
+
+第四批新增 `scripts/verify_runtime.py` 并接入 `make terminal`；既有 PTY 模型 fixture 选择当前轮次、独立处理记忆提取，临时 XDG state 隔离宿主。新增磁盘满事务回滚回归、上下文参数 null 校验、历史调用 ID 的轮内唯一命名；闭合轮次使用已过滤归档继续上下文。PTY 发现过滤误伤 task-specific，修正词边界并补回归。
+
+### 验证状态
+
+开发 SQLite/上下文/记忆/agent/app/config/model 局部测试通过；runtime 新 PTY 四组场景通过（连续/恢复/隔离/管理/未知结果、临时模式、现存记忆隔离/no-history、存储失败）。完整 make check/lint/build/terminal 和最低 Go 1.26 正式验收交独立 Agent，尚未完成。默认缓存及本地监听受限，已使用经批准的 Go 1.27.2 一致工具链、可写缓存和本地模拟服务。后续独立结果补充到 [runtime 交接](handoffs/agent-runtime.md)。
+
+### 未验证项
+
+真实供应商、SSH 与个人 bashrc 未调用。自动记忆属于可能出错的模型判断；凭据过滤不声称能够识别任意秘密文本。
+
 ## 2026-10-11: 通用任务固定场景回归
 
 ### 目标与改动

@@ -77,6 +77,23 @@ func New(cfg config.Config) *HTTPClient {
 	}
 }
 
+// EncodeRequest serializes the exact Chat Completions body for budget accounting.
+func EncodeRequest(modelName string, messages []Message, tools []Tool) ([]byte, error) {
+	body := struct {
+		Model      string    `json:"model"`
+		Messages   []Message `json:"messages"`
+		Tools      []Tool    `json:"tools,omitempty"`
+		ToolChoice string    `json:"tool_choice,omitempty"`
+		Parallel   bool      `json:"parallel_tool_calls"`
+	}{Model: modelName, Messages: messages, Tools: tools}
+	if len(tools) > 0 {
+		body.ToolChoice = "auto"
+	}
+	// The zero Parallel field is deliberately encoded as false: execution
+	// authority is granted one command at a time by the Agent.
+	return json.Marshal(body)
+}
+
 // Complete sends one bounded, non-streaming Chat Completions request.
 // It makes no application-level retry and follows no redirects. Successful
 // responses are capped at 1 MiB and must contain exactly one finished assistant
@@ -85,19 +102,7 @@ func (c *HTTPClient) Complete(ctx context.Context, messages []Message, tools []T
 	if !c.config.Ready() {
 		return Message{}, &Error{Kind: Configuration}
 	}
-	body := struct {
-		Model      string    `json:"model"`
-		Messages   []Message `json:"messages"`
-		Tools      []Tool    `json:"tools,omitempty"`
-		ToolChoice string    `json:"tool_choice,omitempty"`
-		Parallel   bool      `json:"parallel_tool_calls"`
-	}{Model: c.config.Model, Messages: messages, Tools: tools}
-	if len(tools) > 0 {
-		body.ToolChoice = "auto"
-	}
-	// The zero Parallel field is deliberately encoded as false: execution
-	// authority is granted one command at a time by the Agent.
-	data, err := json.Marshal(body)
+	data, err := EncodeRequest(c.config.Model, messages, tools)
 	if err != nil {
 		return Message{}, &Error{Kind: Protocol}
 	}

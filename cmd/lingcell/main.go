@@ -19,7 +19,9 @@ import (
 	"lingcell/internal/config"
 	"lingcell/internal/model"
 	"lingcell/internal/project"
+	"lingcell/internal/runtime"
 	"lingcell/internal/shell"
+	"time"
 )
 
 func main() { os.Exit(run()) }
@@ -29,6 +31,8 @@ func main() { os.Exit(run()) }
 func run() int {
 	path := flag.String("config", config.DefaultPath(), "JSON configuration path")
 	noHistory := flag.Bool("no-history", false, "do not persist input history")
+	resume := flag.String("resume", "", "explicitly restore a conversation by ID")
+	ephemeral := flag.Bool("ephemeral", false, "disable session, memory and input-history persistence")
 	doctor := flag.Bool("doctor", false, "check local dependencies and configuration without network access")
 	version := flag.Bool("version", false, "show version")
 	flag.Parse()
@@ -37,7 +41,11 @@ func run() int {
 		return 0
 	}
 	if flag.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: lingcell [-config path] [-no-history] [-doctor]")
+		fmt.Fprintln(os.Stderr, "usage: lingcell [--config path] [--no-history] [--resume id | --ephemeral] [--doctor]")
+		return 2
+	}
+	if *ephemeral && *resume != "" {
+		fmt.Fprintln(os.Stderr, "--ephemeral cannot resume persisted sessions")
 		return 2
 	}
 	if *doctor {
@@ -78,6 +86,29 @@ func run() int {
 		return 1
 	}
 	defer reader.Close()
+	var store *runtime.Store
+	var runtimeErr error
+	if !*ephemeral {
+		store, runtimeErr = runtime.Open(runtime.DefaultPath(), os.Getenv(cfg.APIKeyEnv))
+		if store != nil {
+			defer store.Close()
+		}
+	}
+	var conversation *runtime.Runtime
+	if runtimeErr == nil {
+		conversation, runtimeErr = runtime.New(store, reader.Root, *resume, cfg.ContextMaxBytes, cfg.Model, time.Duration(cfg.TimeoutSeconds)*time.Second)
+	}
+	if runtimeErr != nil && *resume != "" {
+		fmt.Fprintln(os.Stderr, runtimeErr)
+		return 1
+	}
+	defer func() {
+		if conversation != nil {
+			_ = conversation.Close()
+		}
+	}()
+	// A deferred closure below closes the currently selected session after any switch.
+
 	sess, err := shell.Start(context.Background(), shell.Options{Dir: dir, Output: os.Stdout, Input: os.Stdin})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -114,7 +145,7 @@ func run() int {
 			}
 		}
 	}()
-	a := app.App{Shell: sess, Reader: reader, Model: model.New(cfg), Config: cfg, Output: os.Stdout}
+	a := app.App{Runtime: conversation, RuntimeError: runtimeErr, Shell: sess, Reader: reader, Model: model.New(cfg), Config: cfg, Output: os.Stdout}
 	a.WithCancel = func(cancel context.CancelFunc) func() {
 		mu.Lock()
 		// Classification can enter a nested command or Agent task. Restoring the
@@ -128,7 +159,12 @@ func run() int {
 			mu.Unlock()
 		}
 	}
-	if err := a.Init(*noHistory); err != nil {
+	defer func() {
+		if a.Runtime != nil {
+			_ = a.Runtime.Close()
+		}
+	}()
+	if err := a.Init(*noHistory || *ephemeral); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}

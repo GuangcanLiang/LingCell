@@ -28,6 +28,9 @@ export APP_MODE=dev
 | `:ai <需求>` | 强制进入 Agent |
 | `:sh <命令>` | 跳过分类，交给 Bash |
 | `:fix` | 诊断上一条普通命令 |
+| `:session list/new/resume/show/delete` | 管理有界会话记录；删除需确认 |
+| `:context` | 查看请求字节预算、摘要范围和轮次 |
+| `:memory list/show/add/update/forget` | 查看和修正长期记忆 |
 | `:help` | 显示帮助 |
 | `:exit` / Ctrl-D | 退出并恢复终端 |
 
@@ -51,19 +54,28 @@ export APP_MODE=dev
   "model": "your-tool-calling-model",
   "api_key_env": "LINGCELL_API_KEY",
   "max_decisions": 8,
-  "timeout_seconds": 60
+  "timeout_seconds": 60,
+  "context_max_bytes": 131072
 }
 ```
 
 `base_url` 是兼容 Chat Completions 服务的 API 根路径，程序追加 `/chat/completions`。模型必须支持工具调用；没有硬编码供应商或模型。API 密钥仅从 `api_key_env` 指定的环境变量读取，应在启动 LingCell 前设置。无认证的本地服务可不设置该变量。密钥不写入配置、历史或日志。仓库不包含真实密钥，本次实现也未配置或调用真实供应商。
 
-配置可增加 `history_file` 指定输入历史文件；设为 `""` 或使用 `--no-history` 可关闭持久历史。默认保存到 `$XDG_CACHE_HOME/lingcell/history`（通常是 `~/.cache/lingcell/history`），权限为 `0600`。只保存用户顶层输入，不保存确认回答、模型上下文、读取的文件或命令输出；本会话的 Bash 历史写入关闭。
+配置可增加 `history_file` 指定输入历史文件；设为 `""` 或使用 `--no-history` 可关闭持久历史。默认保存到 `$XDG_CACHE_HOME/lingcell/history`（通常是 `~/.cache/lingcell/history`），权限为 `0600`。输入历史只保存顶层输入；会话记录另外保存有界请求、模型响应和工具结果，`--no-history` 不关闭会话记录。使用 `--ephemeral` 关闭全部本次持久化和长期记忆读取。本会话的 Bash 历史写入关闭。
+
+## 连续会话与长期记忆
+
+正常启动新会话；退出后用 `./bin/lingcell --resume <id>` 显式恢复，必须从匹配的固定项目根启动。会话存于 `$XDG_STATE_HOME/lingcell/runtime.db`（默认 `~/.local/state/lingcell/runtime.db`），有进程独占锁。恢复不续跑命令；Bash 是新进程，变量、作业与机器状态需重新获取。进程内切换会话不改变当前 Bash。
+
+上下文默认按实际模型请求 JSON 限制为 128 KiB，超限摘要较旧轮次并保留原始记录；摘要失败或仍超限会停止请求。任务结束后自动提取小型有来源长期记忆，新会话通过工具按需检索。记忆可能错误，可查看、修改和删除；历史确认和记忆不授予执行权限。
+
+记录每轮最多 2 MiB、每会话最多 64 MiB；已知凭据及可识别敏感模式过滤不保证识别任意秘密。写入故障停止 Agent，普通 shell 保留可用；中断命令结果未知时明确提示，绝不重试。详见 [runtime 行为、管理指令与边界](docs/runtime.md)。
 
 ## Agent 与文件边界
 
 每次任务开始提供程序生成的 Linux 内核、CPU 架构、有效权限级别（root/non_root）、当前 Bash 目录、固定项目读取根和工具名称。该上下文不含环境变量、账户身份详情、进程列表或配置内容；实时机器状态通过获批命令查询。
 
-Agent 提供 `list_files`、`read_file`、`search_text`、`read_file_range` 和 `run_command` 五个工具。文件工具自动执行；`run_command` 展示完整命令、实际工作目录及目的，输入 `y` 或 `yes` 后才执行。默认拒绝，拒绝后立即结束任务。每轮最多执行一条获批命令，然后将合并 PTY 输出、退出码、目录及截断标记作为工具结果返回模型。
+Agent 提供 `list_files`、`read_file`、`search_text`、`read_file_range`、`run_command`，以及 `read_session_history` 和 `search_memory` 数据工具。文件工具自动执行；`run_command` 展示完整命令、实际工作目录及目的，输入 `y` 或 `yes` 后才执行。默认拒绝，拒绝后立即结束任务。每轮最多执行一条获批命令，然后将合并 PTY 输出、退出码、目录及截断标记作为工具结果返回模型。
 
 自动读取范围固定为启动目录所属的最近 Git 项目根；无 Git 时固定为启动目录。`cd` 不扩大范围。文件工具仅接受项目相对路径，拒绝 `..`、范围外符号链接、被排除的符号链接目标和特殊文件，遵循各层 `.gitignore`。打开文件时使用内核范围约束并禁止路径在检查后被替换为符号链接。
 
@@ -103,7 +115,8 @@ Go 在顶层编辑输入；命令通过独立管道按 NUL 边界提交，再由
 | `internal/shell` | Bash、PTY、控制协议、状态与输出限制 |
 | `internal/router` | 本地路由、续行及失败接管规则 |
 | `internal/model` | 标准库 HTTP 客户端、分类与工具调用协议 |
-| `internal/agent` | 决策上限、工具校验、逐条确认及结果反馈 |
+| `internal/agent` | 单轮决策、工具校验、逐条确认及结果反馈 |
+| `internal/runtime` | 会话记录、恢复、上下文预算/摘要及有来源长期记忆 |
 | `internal/project` | 固定项目范围、排除规则、忽略规则和读取预算 |
 | `internal/app` | Readline、基本补全、指令及交互流程 |
 | `internal/config` | JSON 配置、默认值及校验 |
@@ -120,6 +133,8 @@ make terminal
 Go 测试使用模拟模型与本地 HTTP 服务，覆盖 Bash 状态、个人钩子、长命令、多行及 heredoc、输出截断、取消和作业控制、路由、文件越界及 `.gitignore`、读取预算、工具反馈、拒绝、参数错误、超时与循环上限。`make check` 检查 `gofmt`、`go mod tidy -diff`，再运行 `go vet` 和竞态测试。`make lint` 运行 Staticcheck，安装方法见维护指南；`make terminal` 会先构建 CLI，再执行 PTY 验收。
 
 PTY 验收脚本需要 Python 3 标准库，启动临时 HOME 和本地模拟模型，通过真实 CLI 验证输入编辑、续行、Ctrl-C/Z、`bg/fg`、缩放、Agent 确认/拒绝、错误诊断、分类、模型取消、历史与退出终端恢复。系统安装了 `vim` / `top` 时还会实际启动它们。脚本不使用真实供应商或远程 SSH 主机；成功的远程 SSH 会话及真实供应商工具调用需选定服务后联调。验收会分别打印 `PASS` / `FAIL` / `SKIP`；默认运行三个独立 CLI 会话，缺少 vim/top/ssh 时明确跳过，只运行 `ssh -V` 不表示远程连接已验证。
+
+`make terminal` 还运行 `scripts/verify_runtime.py`：多轮、重启恢复、会话独占/项目根校验、按需记忆、管理指令、未知结果不重放、存储失败与临时模式。
 
 `make terminal` 同时运行 [固定通用任务场景](docs/task-scenarios.md)：项目入口定位、错误诊断、模拟机器状态/处理拒绝、获批代码修改/实际差异/验证、失败反馈、边界与取消。任务脚本打印实际决策和确认次数；它验证程序工具闭环，真实模型的通用任务效果仍未验证。
 
@@ -147,6 +162,6 @@ SSH 检查通过远端只读 sh 握手验证输入、窗口缩放、Ctrl-C 及�
 
 开发在短期任务分支及独立 worktree 进行；每个有意义的变动都保存 Git 提交。正式验收必须派生干净上下文测试 subagent，在候选 SHA 的独立工作树验证；通过后才整合到稳定 `main`，保留任务合并记录。开始维护请先读 AGENT.md 并启用仓库 hooks。当前模块名 `lingcell` 用于本地开发；确定远程仓库并需要远程 `go install` 时，再调整为仓库模块路径。
 
-MVP 仅支持 Linux 交互 CLI，不包含 GUI、多 Agent、MCP、后台自主任务或跨会话记忆。个人 Bash 编辑插件、极端提示符钩子以及主动修改 LingCell 内部钩子的配置不在兼容承诺内。
+目前仅支持 Linux 交互 CLI，不包含 GUI、多 Agent、MCP 或后台自主任务。个人 Bash 编辑插件、极端提示符钩子以及主动修改 LingCell 内部钩子的配置不在兼容承诺内。
 
 实现依据：[Bash 交互行为](https://www.gnu.org/software/bash/manual/html_node/Interactive-Shell-Behavior.html)、[creack/pty](https://github.com/creack/pty)、[reeflective/readline](https://github.com/reeflective/readline)、[mvdan shell 语法解析](https://pkg.go.dev/mvdan.cc/sh/v3/syntax)、[x/term](https://pkg.go.dev/golang.org/x/term)、[兼容工具调用协议示例](https://api-docs.deepseek.com/guides/tool_calls/)。

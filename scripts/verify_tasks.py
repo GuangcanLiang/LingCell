@@ -48,16 +48,26 @@ class TaskModel(MockModel):
             # The fixture must not inherit a credential from the parent shell.
             assert "Authorization" not in self.headers, "mock received an unexpected credential header"
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if not body.get("tools") and body["messages"][0]["content"].startswith("Extract at most"):
+                payload = json.dumps({"choices": [{"message": {"role": "assistant", "content": '{"memories":[]}'}, "finish_reason": "stop"}]}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
             self.requests.append(body)
             request_index = len(self.requests) - 1
             assert body.get("tools"), "task unexpectedly used classifier"
             messages = body["messages"]
+            current = max(i for i, m in enumerate(messages) if m["role"] == "user" and "runtime_context" in json.loads(m["content"]))
+            messages = [messages[0]] + messages[current:]
             initial = json.loads(messages[1]["content"])
             request = initial["request"]
             scenario = "diagnose" if request.startswith("Diagnose the last user-issued shell command") else next(key for key, text in REQUESTS.items() if text == request)
             runtime = initial["runtime_context"]
             assert runtime["project_root"] == runtime["cwd"], "fixture scope changed"
-            assert set(runtime["tools"]) == {"list_files", "read_file", "search_text", "read_file_range", "run_command"}
+            assert set(runtime["tools"]) == {"list_files", "read_file", "search_text", "read_file_range", "run_command", "search_memory", "read_session_history"}
             results = [json.loads(m["content"]) for m in messages if m["role"] == "tool"]
             # Prior command diagnostics are synthetic tool data, never user text.
             if scenario == "diagnose":
