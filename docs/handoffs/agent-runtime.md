@@ -210,3 +210,7 @@ Go 1.27.2 一致工具链目录 `/home/liang_guang_can/.local/share/go/current/b
 ## 返回开发者的动作
 
 保存本报告与开发日志证据，核对main仍为交接基线、任务候选仍为已验收SHA以及AGENT.md合入门禁。验收后仅可追加证据文档；代码、测试、依赖、脚本、hooks、Makefile或规范/操作说明变化需要新的独立验收。本报告仅适用于0f60a4148840a7308925a67b8806ff5d79ba9e7d，本身不授予合并权限。
+
+## PR 发布记录（2026-10-12）
+
+用户明确授权创建 PR 后，已将 `feat/agent-runtime` 推送到 origin 并创建 [PR #1](https://github.com/GuangcanLiang/LingCell/pull/1)：`feat(runtime): add resumable sessions and sourced long-term memory`，目标 main。创建时 head 为 `2f2c80123483dca8cbc4f146724682f384b90e5f`，目标基线仍为 `e83f13e52e4029e819dfae194edf55024f23d807`；受验产品代码仍为 `0f60a4148840a7308925a67b8806ff5d79ba9e7d`，之后仅追加日志/交接证据。PR 描述包含最终验收结果和报告链接，不授予合并权限；本次没有合并或修改 main。

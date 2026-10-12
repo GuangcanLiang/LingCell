@@ -14,6 +14,9 @@
 
 验收后只追加此日志与交接证据，产品候选保持上述 SHA。main 仍为交接基线且干净；当前 origin 已连接 GitHub，远程 PR/推送按维护指南另需用户授权，因此实现先完整保存在已验收任务分支，未推送或改动 main。
 
+用户随后授权创建 PR；已推送任务分支并建立 [PR #1](https://github.com/GuangcanLiang/LingCell/pull/1)，以 main 为目标，附完整独立验收报告。发布后只追加此日志与交接记录，不改变受验代码；证据文档检查链接与 `git diff --check`，不重复应用测试。本次未合并 PR，main 保持基线。
+
+
 
 
 ## 2026-10-11: Agent runtime 会话、上下文及长期记忆升级
