@@ -138,3 +138,75 @@ Go 1.27.2 一致工具链目录 `/home/liang_guang_can/.local/share/go/current/b
 ## 目录证据修复后交接
 
 开发已将事实来源校验与失效观察统一为 `evidenceTool`，使 list_files 与其他成功证据工具遵守同一失效契约；新增真实 Data 形状的目录变化回归。新候选 SHA/测试路径由交接消息提供；第三轮 fresh-context Agent 必须独立重新检查新候选，完整报告不沿用第二轮 PASS 项。首轮五项及第二轮 F1 都要复测。
+
+## 最终独立报告（候选 0f60a41，PASS）
+
+### Agent runtime 最终独立验收报告
+
+- 状态：**PASS**
+- 测试 Agent：`/root/runtime_final_acceptance`（fresh context，独立 detached worktree）
+- 日期：2026-10-12
+- 基线完整 SHA：`e83f13e52e4029e819dfae194edf55024f23d807`
+- 候选完整 SHA：`0f60a4148840a7308925a67b8806ff5d79ba9e7d`
+- 实际 HEAD（开始/结束）：均为 `0f60a4148840a7308925a67b8806ff5d79ba9e7d`
+- 工作目录：`/home/liang_guang_can/LingCell/.worktrees/verify-agent-runtime-0f60a41`
+- 工作树状态：开始 `git status --short` 为空；结束 tracked/untracked 状态仍为空，detached HEAD。仅生成被忽略的 `bin/` 和 `scripts/__pycache__/`。未修改产品代码、Git refs/config/hooks 或其他 worktree，未提交/合并；探针和报告均在 `/tmp`。
+- 环境/工具版本：Linux `6.6.87.2-microsoft-standard-WSL2`，amd64，uid 1000；Go `1.27.2 linux/amd64`；最低工具链 `/tmp/lingcell-go126/go/bin/go` 实测 `go1.26.0 linux/amd64`；Staticcheck `2026.2.1 (0.8.1)`。
+- E127：`env PATH=/home/liang_guang_can/.local/share/go/current/bin:/home/liang_guang_can/.local/share/go-dev/tools/bin:/usr/bin:/bin GOTOOLCHAIN=local GOCACHE=/tmp/lingcell-final-go127`。
+- E126：`env PATH=/tmp/lingcell-go126/go/bin:/usr/bin:/bin GOTOOLCHAIN=local GOCACHE=/tmp/lingcell-final-go126`。
+- 下表命令均在上述测试目录执行，结论依据本轮实际运行。重新阅读 AGENTS.md、AGENT.md、README、Makefile、runtime 说明、开发日志、交接条件/两轮 FAIL 记录与基线到候选差异；独立审查 runtime 保存/预算/来源/失效实现以及 Agent/App/CLI/配置/模型/PTY 集成。旧报告仅用于定位待复测项，未沿用旧候选的 PASS。
+
+| 验收条件/检查 | 命令或步骤 | 退出码/观察结果 | 判定 |
+| --- | --- | --- | --- |
+| 候选身份与差异审查 | `pwd`、`git rev-parse HEAD`、`git status --short --branch`、`git log -8 --oneline`、`git diff --stat <base> <candidate>`；源码与文档审查；单独审查 f382568→0f60a41 | 完整候选 SHA、detached、干净；来源与失效使用同一个 evidenceTool，包含 list_files | PASS |
+| 默认工具链全检查 | E127 `make check` | 0；fmt-check、`go mod tidy -diff`、`go vet ./...`、`go test -race ./...` 全通过；8个内部包通过，runtime 7.773s | PASS |
+| 最低 Go1.26.0 全检查 | E126 `make check GO=/tmp/lingcell-go126/go/bin/go` | 0；格式、模块、vet、竞态测试全通过；8个内部包通过，runtime 8.163s | PASS |
+| 全仓库 Staticcheck | E127 加 `STATICCHECK_CACHE=/tmp/lingcell-final-staticcheck`，`make lint` | 0；无诊断 | PASS |
+| Staticcheck 实际分析 runtime | E127 加 `STATICCHECK_CACHE=/tmp/lingcell-final-measure-cache`，`staticcheck -debug.measure-analyzers /tmp/lingcell-final-analyzers.txt ./internal/runtime` | 0；2,360条测量，runtime实现、runtime测试变体、runtime.test各160条，实际分析新包 | PASS |
+| 默认构建 | E127 `make build` | 0；CLI构建成功，make terminal亦独立构建 | PASS |
+| 最低版本构建 | E126 `make build GO=/tmp/lingcell-go126/go/bin/go` | 0；CLI构建成功 | PASS |
+| 默认/最低工具链模块校验 | E127 `go mod verify`；E126 `/tmp/lingcell-go126/go/bin/go mod verify` | 均0；均输出 all modules verified | PASS |
+| 现有 Bash/路由/PTY/确认/取消 | E127 `make terminal` → `verify_terminal.py` | 0；三个独立真实CLI/PTY会话，vim/top、本地ssh版本、Bash状态、多行、作业、缩放、Agent工具、错误、拒绝/取消、历史和终端恢复通过 | PASS |
+| 通用任务闭环与读取边界 | 同一 `make terminal` → `verify_tasks.py` | 0；route/route_path/route_var、understand、diagnose、machine、modify、failed、boundary、cancel十场景通过；modify 6决策/3确认，boundary 5决策/0确认 | PASS |
+| 多轮/重启恢复/新会话隔离/Bash状态 | 同一 `make terminal` → `verify_runtime.py` | 0；第一轮约束进入第二轮与显式恢复追问；新会话无旧对话/自动记忆注入；新Bash变量unset；锁和根不匹配拒绝；历史调用/结果配对 | PASS |
+| 拒绝/中断/未知结果与存储故障 | runtime PTY脚本 + 独立存储探针 | 0；拒绝不执行；kill后unknown提示，once文件仅1行，不重放；损坏DB不调用模型但普通shell可用；恢复unknown历史补齐，不赋予权限 | PASS |
+| ephemeral/no-history | runtime PTY脚本 + Init/CLI源码核对 + 独立探针 | 0；ephemeral仍进程内连续，不创建state/cache、不检索既有记忆、不提取；Init跳过持久输入历史；no-history生成会话DB但不生成输入历史 | PASS |
+| 首轮五项缺陷重测 | E127 `go test -overlay=/tmp/lingcell-final-overlay.json ./internal/runtime ./internal/agent -run 'TestIndependent|TestFinal' -v -count=1` | 0；等价decoded参数空白/重排变化失效；用户授权前/后缀省略拒绝；完整工具结果中的记忆指令前/后缀拒绝；带引号/反斜杠/换行合成凭据从嵌套JSON过滤；当前轮大Unicode结果有archive_turn引用且分页可完整重建 | PASS |
+| 第二轮目录列表缺陷重测与新证据矩阵 | 同一overlay命令：TestIndependentListEvidenceInvalidation、TestFinalEvidenceToolContract | 0；真实list_files Data变化后旧事实pending_verification；list_files/read_file/read_file_range/search_text/run_command五工具同契约：未变仍valid、不同参数不失效、等价参数的新结果变化使事实失效 | PASS |
+| 来源、敏感/授权/瞬态边界 | 同一overlay：TestIndependentSourceBoundary + 仓库memory测试 | 0；伪造session/turn/message、模型提案、失败工具/命令、error、项目外cwd、历史/记忆工具作为证据、工具偏好、敏感/瞬态内容与超2KiB拒绝；实际用户偏好和成功工具事实接受 | PASS |
+| 请求字节/摘要失败/原档/分页 | 同一overlay：RedactionAndActiveFragments、SummaryBudgetAndFailure；仓库context测试；下述额外探针 | 0；实际EncodeRequest字节与LastBytes一致；保留最近两轮/当前约束，不能满足预算时停止；摘要请求受预算；模拟摘要故障只请求一次且through/summary不变，五轮原档保留；Unicode当前轮fragment逐字节重建保存记录，每页<=32KiB | PASS |
+| 记忆范围/索引/版本/冲突/过期/检索预算 | 同一overlay：TestIndependentMemoryIsolationIndexBounds + 仓库memory测试 | 0；项目/本机隔离、FTS长查询/短字面查询；每次<=8项/8KiB；管理修正更新索引，删除移除索引/版本；偏好版本更新；事实冲突与过期明确；旧归档不自动提取 | PASS |
+| SQLite权限/迁移/故障/归档限额 | 同一overlay：StorageTransactionsFaultAndRestore、ArchiveBoundsAndPermissions + 仓库store测试 | 0；目录0700、DB/WAL/SHM/锁0600；无权限目录拒绝；未知/损坏/部分schema拒绝，迁移事务回滚；query_only故障锁存、max_page_count写失败原记录不变；2MiB轮次/64MiB会话超限拒绝且不部分写入 | PASS |
+| 四个保存门禁与新确认 | 同一overlay：agent/TestIndependentRuntimeGates、TestIndependentHistoricalPermission | 0；request/response/start/result处关闭DB，模型/确认/执行次数严格符合门禁；结果写失败无下一模型决策，下一任务停止；历史获批后再次提案仍确认并可拒绝 | PASS |
+| 自动提取界限/失败语义 | 同一overlay：TestIndependentExtractionBoundsEphemeral + PTY/源码 | 0；成功已保存Agent轮次由App最多调用一次有界提取；6候选整体拒绝无写入，1合法候选接受；失败轮次/ephemeral不提取；请求<=上下文预算且<=64KiB；普通shell不提取 | PASS |
+| 默认存储位置、包含工具schema的真实wire预算、明确摘要故障 | E127 `go test -overlay=/tmp/lingcell-final-overlay.json ./internal/runtime -run 'TestFinalDefaultStoragePath|TestFinalToolSchemaBudgetAndSummaryFailure' -v -count=1` | 0；合成HOME/XDG路径符合默认值；工具schema、HTML转义/中文JSON工具数据全部计入实际请求；模型摘要故障返回错误，仅请求一次，原摘要/覆盖及5轮记录保留 | PASS |
+| 文档、Python/hooks语法、差异 | `git diff --check <base> <candidate>`、`git diff --check`；3 Python脚本ast.parse；本地Markdown链接扫描；`bash -n .githooks/pre-commit`；`bash -n .githooks/commit-msg` | 均0；19份Markdown/42本地链接无缺失，3 Python及2 hooks语法通过 | PASS |
+| 结束身份与工作树核对 | `git rev-parse HEAD`、`git status --short --branch`、`git status --short --ignored` | HEAD未变、detached、tracked/untracked为空；仅忽略的bin和Python缓存 | PASS |
+
+## 缺陷与复现
+
+本次已执行检查未发现产品缺陷。首轮五项及第二轮目录列表失效均在本候选重新实测通过；没有尚未解决的本轮阻塞项。上述检查不能推断所有输入、真实模型语义或环境均正确。
+
+独立探针先逐项审读此前临时测试，复制到新的/tmp文件并更新overlay指向本候选；新增五工具证据矩阵、默认路径和包含工具schema/转义的预算探针。本轮额外预算夹具初次直接使用原始文本工具Content，未遵循Agent实际json.Marshal结果形状，导致预算探针退出1；修正/tmp夹具为真实JSON工具数据并补助手调用配对后额外探针退出0。这不是产品路径缺陷，未将该失败计作PASS证据；最终保存的探针为修正夹具。
+
+## 证据文件
+
+- `/tmp/lingcell-final-check127.log`、`/tmp/lingcell-final-check126.log`
+- `/tmp/lingcell-final-lint.log`、`/tmp/lingcell-final-runtime-lint.log`、`/tmp/lingcell-final-analyzers.txt`
+- `/tmp/lingcell-final-build127.log`、`/tmp/lingcell-final-build126.log`
+- `/tmp/lingcell-final-mod127.log`、`/tmp/lingcell-final-mod126.log`
+- `/tmp/lingcell-final-terminal.log`
+- `/tmp/lingcell-final-probes.log`、`/tmp/lingcell-final-extra-probes.log`
+- `/tmp/lingcell-final-runtime_test.go`、`/tmp/lingcell-final-agent_test.go`、`/tmp/lingcell-final-overlay.json`
+
+## 未运行项与限制
+
+- 未授权也未运行真实供应商、远程SSH连接、个人bashrc；PTY脚本明确SKIP后两项，本地ssh版本检查不证明远程连接成功。
+- 摘要/提取只用mock验证程序契约；来源校验不能证明真实模型语义判断正确，也不保证识别任意未知秘密；SQLite物理安全擦除不在承诺范围内。
+- 未做真实磁盘耗尽/断电硬件测试；以SQLite max_page_count、query_only与关闭数据库验证故障和事务门禁。
+- 最低Go1.26.0已跑完整check、build、mod verify；PTY和Staticcheck在默认Go1.27.2执行，不宣称最低版PTY/Staticcheck另行通过。
+- 没有缺少权限/工具或尚未运行的本轮必需检查；运行仅使用本地模拟服务、临时文件和合成配置。
+
+## 返回开发者的动作
+
+保存本报告与开发日志证据，核对main仍为交接基线、任务候选仍为已验收SHA以及AGENT.md合入门禁。验收后仅可追加证据文档；代码、测试、依赖、脚本、hooks、Makefile或规范/操作说明变化需要新的独立验收。本报告仅适用于0f60a4148840a7308925a67b8806ff5d79ba9e7d，本身不授予合并权限。
