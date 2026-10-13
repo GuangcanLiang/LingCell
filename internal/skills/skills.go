@@ -115,6 +115,9 @@ func ValidName(name string) bool {
 // entries through the project reader; no skill body is read for discovery.
 func (t *Task) List(ctx context.Context) (Catalog, error) {
 	result := Catalog{Skills: []Entry{}, Issues: append([]string(nil), t.issues...)}
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
 	for _, lib := range t.libraries {
 		if err := ctx.Err(); err != nil {
 			return result, err
@@ -164,6 +167,9 @@ func (t *Task) List(ctx context.Context) (Catalog, error) {
 		}
 		result.Skills = result.Skills[:len(result.Skills)-1]
 		result.Truncated = true
+	}
+	if err := ctx.Err(); err != nil {
+		return result, err
 	}
 	return result, t.budget.ChargeResult(result)
 }
@@ -224,6 +230,9 @@ func (t *Task) Read(ctx context.Context, source, name, path string) (Data, error
 				result.Content = result.Content[:len(result.Content)-1]
 			}
 			result.Truncated = true
+		}
+		if err := ctx.Err(); err != nil {
+			return result, err
 		}
 		return result, t.budget.ChargeResult(result)
 	}

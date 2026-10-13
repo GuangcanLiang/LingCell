@@ -10,6 +10,8 @@
 
 首轮候选 `07c9f364a747a273e81f6985f3d481f5a10989e9` 独立 **FAIL**：真实CLI技能模拟辅助函数参数name冲突、read_skill接受path:null、Terminal继承宿主XDG技能目录。其余完整Go检查/Staticcheck/构建/runtime以及7项独立探针通过；确切证据保存到交接。开发修复三项并补参数回归，局部Go、构建与任务PTY自查通过；新候选重新独立验收，首轮不合入。
 
+第二轮候选 `618b382591917a51f3424228e04655e7c5a78832` 完整Go/Staticcheck/构建/PTY和首轮8项独立探针均通过，但新空技能库取消探针独立 **FAIL**。开发修复List入口与结果返回前的context检查，并补无库取消回归；局部测试通过，第三轮候选重新独立验收。
+
 ## 2026-10-12: Agent runtime 独立验收缺陷修复
 
 首轮候选 `a95ba7a381e1e90f020addd15625f721b06ecb2a` 被独立 overlay 探针确认五项失败：参数 JSON 格式差异未失效事实、来源引用授权和工具指令省略绕过、JSON 转义的已知凭据遗漏、当前大工具结果无法本轮回读。测试 Agent 因额度中断未形成完整报告，首轮未通过、未合入；已收到的独立证据与复现见 [runtime 交接](handoffs/agent-runtime.md)。

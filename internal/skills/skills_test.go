@@ -156,3 +156,16 @@ func TestMissingAndUnsafeLibraries(t *testing.T) {
 		t.Fatalf("unsafe root: %+v", result)
 	}
 }
+
+// TestEmptyLibraryCancellation verifies cancellation even when discovery has no
+// library to iterate, so an empty catalog cannot hide an interrupted operation.
+func TestEmptyLibraryCancellation(t *testing.T) {
+	root, budget := setup(t)
+	task := NewTask(root, nil, budget)
+	defer task.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := task.List(ctx); err != context.Canceled {
+		t.Fatalf("empty library cancellation: %v", err)
+	}
+}

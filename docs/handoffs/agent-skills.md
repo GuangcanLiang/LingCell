@@ -17,7 +17,7 @@
 - 建议命令：相关 go test；make check；make lint；make build；make terminal；git diff --check。环境提供 Go 与 staticcheck，不升级依赖。
 - 约束：不读取真实凭据/个人技能内容，不联网请求真实模型/SSH、不修改产品/测试代码、依赖或规范、不提交/合并。独立探针可放临时目录并使用 Go overlay。
 - 已知未验证：真实供应商工具决策、真实SSH/个人配置；默认模拟测试不代表真实模型技能选择效果。最低 Go1.26 可用时追加，未运行须注明。
-- 第二轮必须复测：首轮三个缺陷（辅助函数name冲突、path:null误接受、宿主XDG_CONFIG_HOME污染），复现见首轮报告。新候选SHA与detached目录通过协调消息提供。
+- 第三轮必须复测：首轮三个缺陷以及第二轮空技能库取消遗漏，复现见下方两轮报告。新候选SHA与detached目录通过协调消息提供。
 
 开发自查不作为验收结论。
 
@@ -100,3 +100,108 @@ PY
 ## 返回开发者的动作
 
 修复以上三项，补必要回归，在任务分支提交新候选，再派生全新上下文测试Agent于新候选detached worktree验收。旧报告不能适用于新提交，报告不授予合并权限。
+
+
+# Agent skills 第二轮独立验收报告
+
+- 状态：**FAIL**。首轮三项缺陷均已复测通过；新增“无技能库时忽略取消”违反明确验收条件，候选不能合入。
+- 测试 Agent：`/root/skills_final_acceptance`，干净上下文、最小交接、独立 detached worktree；自行读取仓库说明、交接、差异及首轮原始探针后执行。
+- 基线完整 SHA：`ef5acba95a5a728e82b62437d6251a652c93899d`。
+- 候选完整 SHA：`618b382591917a51f3424228e04655e7c5a78832`。
+- 实际 HEAD（开始/结束）：均为 `618b382591917a51f3424228e04655e7c5a78832`。
+- 所有仓库命令工作目录：`/home/liang_guang_can/LingCell/.worktrees/verify-agent-skills-r2`。
+- 工作树状态：开始/结束均为 `## HEAD (no branch)`、无源码修改；结束 `git diff --exit-code` 为0，仅忽略生成物 `bin/`、`scripts/__pycache__/`。未修改产品、仓库测试、规范、依赖；未提交、合并或修改共享 refs/config。
+- 环境：Linux `6.6.87.2-microsoft-standard-WSL2` x86_64；Go `go1.27.2 linux/amd64`；Staticcheck `2026.2.1 (0.8.1)`，路径 `/home/liang_guang_can/.local/share/go-dev/tools/bin/staticcheck`；Python `3.13.5`。`go list ./...` 实际列出命令包和9个内部包。
+- 原始日志、报告及新 overlay：`/tmp/lingcell-skills-r2-probes-24glib6f`。首轮临时探针经独立审查复制至新临时目录，overlay 只接入虚拟测试文件，没有改候选。
+
+| 验收条件/检查 | 命令或步骤 | 退出码/观察结果 | 判定 |
+| --- | --- | --- | --- |
+| 相关Go回归 | `go test -count=1 -v ./internal/skills ./internal/agent ./internal/config ./internal/project` | 0；四包全部通过，原始日志 `related.log` | PASS |
+| 格式/模块/vet/race | `make check` | 0；gofmt检查、tidy -diff、vet、9个内部包race通过，命令包无测试；`check.log` | PASS |
+| Staticcheck | `make lint` | 0；实际执行 `staticcheck ./...`，无诊断；`lint.log` | PASS |
+| 构建 | `make build` | 0；`go build -o bin/lingcell ./cmd/lingcell`；`build.log` | PASS |
+| 原首轮8项独立探针复测 | 下方overlay命令 | 0；8个顶层探针全过；`overlay.log` | PASS |
+| 默认/额外来源、一级发现及精确范围 | overlay `TestAcceptanceCatalogAndExactScope` | 同名project/user/extra-1分开，正文未上传，无SKILL/非法名称/嵌套/目录型SKILL排除，Git祖先外技能不能读 | PASS |
+| 目录枚举/返回限制 | overlay `TestAcceptanceCatalogLimits` | 257技能返回256，JSON10525字节；4100普通条目返回0，JSON30字节；均truncated=true | PASS |
+| 四层项目忽略规则 | overlay `TestAcceptanceAncestorIgnoreRules` | 原项目根、.lingcell、技能库、技能目录四层忽略规则均阻止reference，正文仍能读 | PASS |
+| 根/内部链接及不可用库 | overlay `TestAcceptanceSymlinkAndUnavailableRoots` | 根链接、祖先链接、普通文件根产生3个issues，缺失库跳过，内部链接拒绝 | PASS |
+| 技能完整JSON/共享预算 | overlay `TestAcceptanceJSONBudgetBothDirections` | 转义技能完整JSON32764字节/内容5447字节，truncated=true；精确累计预算用尽后技能目录及项目读取均报错 | PASS |
+| Bash cd不改变项目 | overlay `TestAcceptanceFixedProjectAfterCwdChange` | 改到另一合成项目后仍读取启动固定项目正文 | PASS |
+| 配置目录上限/路径 | overlay `TestAcceptanceSkillDirectoryConfigCap`及config回归 | 16个有效，17个拒绝；回归另覆盖相对路径、null元素、NUL路径拒绝 | PASS |
+| 首轮path:null缺陷 | overlay `TestAcceptanceExplicitNullSkillPath`及agent回归 | 0；显式null拒绝，省略/空字符串/参考路径仍合法 | PASS |
+| 技能边界/工具角色/命令确认 | 相关回归及源码审查 | 遍历/绝对/敏感/私钥/NUL/忽略/链接/FIFO拒绝；Skills未配置不广告且调用拒绝；恶意正文以role=tool反馈，确认拒绝后零命令执行 | PASS |
+| 首轮name冲突、真实CLI技能闭环 | 合成宿主XDG下 `make terminal`，确切包装见下 | 0；skills四决策/零确认完成发现→正文→references/check.md，正文/引用内容断言通过 | PASS |
+| 首轮宿主XDG污染 | 同一terminal包装，宿主配置只含synthetic-user合成技能 | 0；only-project技能目录断言通过，合成宿主文件不变，Terminal固定临时.config；无真实个人技能读取 | PASS |
+| 完整PTY/通用任务/runtime | 同一 `make terminal` | 0；三CLI会话、vim/top/本地ssh -V；路由/理解/诊断/机器拒绝/实际修改差异验证/失败/边界/取消；runtime连续轮次恢复/隔离记忆/不重放/临时模式/存储故障全部通过；`terminal.log` | PASS |
+| 无技能库取消 | 新独立overlay `TestAcceptanceEmptyLibraryCancellation`，确切命令见下 | 1；已取消ctx返回成功空目录及nil错误；`empty-cancel.log` | FAIL |
+| 文档/空白 | `git diff --check ef5acba95a5a728e82b62437d6251a652c93899d 618b382591917a51f3424228e04655e7c5a78832`；本地Python Markdown链接检查 | 0；5份改动Markdown共36个本地链接存在；主要边界与实现一致 | PASS |
+| 结束HEAD/状态 | `git rev-parse HEAD`、`git status --short --branch`、`git status --short --ignored`、`git diff --exit-code`、`git diff --check` | 0；候选不变，源码干净，只有上述忽略生成物 | PASS |
+
+首轮8探针复测确切命令（运行时尚未追加第9项空库取消探针，退出0）：
+
+```bash
+go test -count=1 -race -v -overlay=/tmp/lingcell-skills-r2-probes-24glib6f/overlay.json ./internal/skills ./internal/config ./internal/agent -run TestAcceptance
+```
+
+新增空库取消探针确切命令（退出1）：
+
+```bash
+go test -count=1 -race -v -overlay=/tmp/lingcell-skills-r2-probes-24glib6f/overlay.json ./internal/skills -run TestAcceptanceEmptyLibraryCancellation
+```
+
+完整terminal确切命令（退出0；日志保存至临时目录）：
+
+```bash
+python3 - <<'PY'
+import os,subprocess,tempfile
+from pathlib import Path
+with tempfile.TemporaryDirectory(prefix='lingcell-r2-host-xdg-') as task_xdg:
+    skill=Path(task_xdg)/'lingcell/skills/synthetic-user/SKILL.md'
+    skill.parent.mkdir(parents=True)
+    skill.write_text('SYNTHETIC_ONLY_HOST_GUIDANCE')
+    with open('/tmp/lingcell-skills-r2-probes-24glib6f/terminal.log','w') as log:
+        code=subprocess.call(['make','terminal'],env=dict(os.environ,XDG_CONFIG_HOME=task_xdg),stdout=log,stderr=subprocess.STDOUT)
+    assert skill.read_text()=='SYNTHETIC_ONLY_HOST_GUIDANCE'
+    print('make terminal exit',code,'synthetic host fixture unchanged')
+    raise SystemExit(code)
+PY
+```
+
+## 缺陷与复现
+
+1. **低，阻止当前候选合入：无技能库时list_skills忽略取消。** 位置 `internal/skills/skills.go:116-121`（context检查仅位于libraries循环），最终返回处继续正常ChargeResult。交接验收条件3明确要求“取消终止工具”。默认project/user库都不存在是支持且常见的状态；此时libraries为空，已取消context绕过所有检查。
+
+   最小复现（临时overlay，使用仓库现有setup创建合成固定项目及空XDG）：
+
+   ```go
+   func TestAcceptanceEmptyLibraryCancellation(t *testing.T) {
+       root, budget := setup(t)
+       task := NewTask(root, nil, budget)
+       defer task.Close()
+       ctx, cancel := context.WithCancel(context.Background())
+       cancel()
+       _, err := task.List(ctx)
+       if err != context.Canceled {
+           t.Fatalf("empty skill catalog with canceled context: got %v, want context.Canceled", err)
+       }
+   }
+   ```
+
+   期望：返回context.Canceled，不将取消当作成功工具结果。实际输出：`empty skill catalog with canceled context: got <nil>, want context.Canceled`，测试退出1。影响有限：这是取消契约遗漏，不存在命令执行授权绕过；Agent循环自身仍有context检查，但不能代替工具契约。建议List入口及返回前检查context，并补无库取消回归。
+
+首轮工具辅助函数name冲突、显式path:null接受、宿主XDG污染三项已修复，独立复测均通过。
+
+## 未运行项与限制
+
+- Go1.26工具链不可用，未下载；Go1.27.2通过不等于最低版本验证，此项为交接可选检查。
+- 未调用真实供应商模型或远程SSH，未读取真实凭据/个人skills/bashrc。脚本明确SKIP远程SSH及个人bashrc；本地ssh -V只验证本地版本命令。
+- 未进行持续恶意文件系统竞争压力测试；文件内容检查只覆盖文档规定的前缀，不保证未读后缀安全。
+- 代码读取时一次复合命令含不存在的`internal/project/query_linux.go`，该阅读命令退出2；随后按实际路径重新审查并单独运行diff空白检查（退出0）。此不是验收工具阻塞或产品失败。
+- 未重复执行追加空库探针后的整个overlay集合；原8项有独立通过日志，新第9项单独失败日志已足够证明FAIL。协调者要求不再扩大本轮覆盖，修复后另派干净上下文验收新SHA。
+
+## 返回开发者的动作
+
+修复List空库取消检查并补必要回归，任务分支提交新候选；新候选需全新独立测试Agent及detached worktree验收。本报告不适用于后续代码SHA，不授予合并权限。
+
+
+第三轮修复：List入口及所有技能结果返回计费前检查取消，新增空技能库取消回归。开发skills/agent局部测试通过；新候选重新独立验收。
