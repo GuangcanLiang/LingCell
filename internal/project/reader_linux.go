@@ -32,6 +32,7 @@ type Reader struct {
 	fd        int
 	closeOnce sync.Once
 	closeErr  error
+	strict    bool
 }
 
 // Task tracks one task's read budget. A Task must not be shared by goroutines.
@@ -147,6 +148,9 @@ func (r *Reader) checked(path string) (string, error) {
 	real, err := filepath.Rel(r.Root, absolute)
 	if err != nil || real == ".." || strings.HasPrefix(real, "../") {
 		return "", errors.New("symlink leaves the project root")
+	}
+	if r.strict && real != rel {
+		return "", errors.New("skill paths must not contain symlinks")
 	}
 	if excluded(real) {
 		return "", errors.New("symlink targets an excluded path")
@@ -319,3 +323,66 @@ func (t *Task) ListFiles(path string) (Data, error) {
 	}
 	return t.finish(path, result.String(), truncated)
 }
+
+// NewScope opens exactly root, without searching for a Git ancestor. It rejects
+// symlinks in root and subsequent reads, and retains exclusions and ignore rules.
+// The caller owns the Reader and must close it after all borrowed tasks finish.
+func NewScope(root string) (*Reader, error) {
+	absolute, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	fd, err := unix.Openat2(unix.AT_FDCWD, absolute, &unix.OpenHow{Flags: unix.O_RDONLY | unix.O_DIRECTORY | unix.O_CLOEXEC, Resolve: unix.RESOLVE_NO_SYMLINKS})
+	if err != nil {
+		return nil, err
+	}
+	return &Reader{Root: absolute, fd: fd, strict: true}, nil
+}
+
+// CheckRegular checks allowed file metadata without reading or charging content.
+func (r *Reader) CheckRegular(path string) error {
+	rel, err := r.checked(path)
+	if err != nil {
+		return err
+	}
+	f, err := r.open(rel)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if !st.Mode().IsRegular() {
+		return errors.New("only regular text files can be read")
+	}
+	return nil
+}
+
+// ChargeResult accounts for a complete encoded result in the shared task budget.
+func (t *Task) ChargeResult(result any) error { return t.chargeResult(result) }
+
+// CheckDirectory validates an allowed directory without enumerating its contents.
+func (t *Task) CheckDirectory(path string) error {
+	rel, err := t.reader.checked(path)
+	if err != nil {
+		return err
+	}
+	f, err := t.reader.open(rel)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if !st.IsDir() {
+		return errors.New("path must be a directory")
+	}
+	return nil
+}
+
+// CheckRegular checks a file against this task's original project scope.
+func (t *Task) CheckRegular(path string) error { return t.reader.CheckRegular(path) }

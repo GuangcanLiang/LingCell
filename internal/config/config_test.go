@@ -22,7 +22,7 @@ func TestConfiguration(t *testing.T) {
 	if err != nil || !c.Ready() || c.APIKeyEnv != "CUSTOM_KEY" {
 		t.Fatalf("configured: %+v %v", c, err)
 	}
-	for _, data := range []string{`{"context_max_bytes":0}`, `{"context_max_bytes":null}`, `{"context_max_bytes":2097153}`, `{"unknown":true}`, `{"timeout_seconds":0}`, `{"max_decisions":0}`, `{"base_url":"file:///tmp/a"}`, `{"base_url":"https://user:secret@example.test/v1"}`, `{} {}`} {
+	for _, data := range []string{`{"skill_dirs":["relative"]}`, `{"skill_dirs":[null]}`, `{"skill_dirs":["/tmp/\u0000"]}`, `{"context_max_bytes":0}`, `{"context_max_bytes":null}`, `{"context_max_bytes":2097153}`, `{"unknown":true}`, `{"timeout_seconds":0}`, `{"max_decisions":0}`, `{"base_url":"file:///tmp/a"}`, `{"base_url":"https://user:secret@example.test/v1"}`, `{} {}`} {
 		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -43,5 +43,16 @@ func TestRejectOversizedAndNullConfig(t *testing.T) {
 		if _, err := Load(path); err == nil {
 			t.Fatal("accepted a truncated or non-object config")
 		}
+	}
+}
+
+func TestSkillDirectories(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"skill_dirs":["/opt/skills","/tmp/review"]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil || len(c.SkillDirs) != 2 || c.SkillDirs[0] != "/opt/skills" {
+		t.Fatalf("skill dirs: %+v %v", c, err)
 	}
 }
