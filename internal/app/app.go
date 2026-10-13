@@ -23,6 +23,7 @@ import (
 	"lingcell/internal/router"
 	"lingcell/internal/runtime"
 	"lingcell/internal/shell"
+	"lingcell/internal/skills"
 )
 
 // App owns one CLI interaction loop. Configure its dependencies before Init;
@@ -221,7 +222,10 @@ func (a *App) ask(ctx context.Context, request string, previous ...shell.Result)
 		return fmt.Errorf("runtime unavailable; shell remains usable: %w", a.RuntimeError)
 	}
 	return a.task(ctx, func(ctx context.Context) error {
-		runner := agent.Agent{Runtime: a.Runtime, Model: a.Model, Shell: a.Shell, Reader: a.Reader.NewTask(), Confirm: a.confirm, Output: modelOutput{a.Output}, Notify: a.progress, MaxDecisions: a.Config.MaxDecisions, Timeout: time.Duration(a.Config.TimeoutSeconds) * time.Second}
+		reader := a.Reader.NewTask()
+		library := skills.NewTask(a.Reader.Root, a.Config.SkillDirs, reader)
+		defer library.Close()
+		runner := agent.Agent{Skills: library, Runtime: a.Runtime, Model: a.Model, Shell: a.Shell, Reader: reader, Confirm: a.confirm, Output: modelOutput{a.Output}, Notify: a.progress, MaxDecisions: a.Config.MaxDecisions, Timeout: time.Duration(a.Config.TimeoutSeconds) * time.Second}
 		err := runner.Run(ctx, request, a.Reader.Root, previous...)
 		if err == nil && a.Runtime != nil {
 			added, updated, memoryErr := a.Runtime.ExtractMemory(ctx, a.Model)

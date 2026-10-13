@@ -2,6 +2,12 @@
 
 记录已完成的工作与实际验证，按日期及主题倒序排列。日期使用 Asia/Shanghai 时区；架构与日常约定见 [AGENT.md](../AGENT.md)。
 
+## 2026-10-13: Agent 按需读取 skills
+
+需求为 Agent 增加 skills 读取能力。新增 `internal/skills`，按任务打开 project/user/显式附加库；`list_skills` 返回有 SKILL.md 的一级目录名称与来源，不上传正文，`read_skill` 按需读取正文及技能相对参考文件。`internal/project` 提供精确目录范围、元数据检查与共享完整JSON计费；`agent/app/config` 接入工具、生命周期和 `skill_dirs`。保持文件排除/忽略/内核约束、禁止技能符号链接、共享32 KiB/256 KiB返回预算及每条命令确认。规则与用法见 [skills说明](skills.md)。
+
+基线 main 为 `ef5acba95a5a728e82b62437d6251a652c93899d`，开发分支 `feat/agent-skills`；候选由 Git 历史与 [独立验收交接](handoffs/agent-skills.md) 索引。开发阶段相关 Go 包局部测试通过，构建通过；正式独立验收尚待执行。未调用真实供应商、SSH或个人配置，未验证真实模型的技能选择效果。远程已连接，任务分支不自动推送或合入 main。
+
 ## 2026-10-12: Agent runtime 独立验收缺陷修复
 
 首轮候选 `a95ba7a381e1e90f020addd15625f721b06ecb2a` 被独立 overlay 探针确认五项失败：参数 JSON 格式差异未失效事实、来源引用授权和工具指令省略绕过、JSON 转义的已知凭据遗漏、当前大工具结果无法本轮回读。测试 Agent 因额度中断未形成完整报告，首轮未通过、未合入；已收到的独立证据与复现见 [runtime 交接](handoffs/agent-runtime.md)。

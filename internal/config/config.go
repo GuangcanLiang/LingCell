@@ -18,6 +18,8 @@ const maxConfigSize = 64 * 1024
 // Config selects the model service, request limits and input-history location.
 // APIKeyEnv names an environment variable; it never stores a credential value.
 type Config struct {
+	// SkillDirs adds explicit skill libraries; default project/user roots remain.
+	SkillDirs []string `json:"skill_dirs,omitempty"`
 	// BaseURL is the API root; the client appends /chat/completions.
 	BaseURL string `json:"base_url"`
 	// Model names a model that supports Chat Completions tool calls.
@@ -101,6 +103,14 @@ func Load(path string) (Config, error) {
 	}
 	if cfg.TimeoutSeconds < 1 || cfg.TimeoutSeconds > 600 {
 		return cfg, errors.New("timeout_seconds must be between 1 and 600")
+	}
+	if len(cfg.SkillDirs) > 16 {
+		return cfg, errors.New("skill_dirs accepts at most 16 directories")
+	}
+	for _, dir := range cfg.SkillDirs {
+		if !filepath.IsAbs(dir) || strings.ContainsRune(dir, 0) {
+			return cfg, errors.New("skill_dirs requires absolute paths without NUL")
+		}
 	}
 	if cfg.BaseURL != "" {
 		u, err := url.Parse(cfg.BaseURL)

@@ -28,6 +28,7 @@ REQUESTS = {
     "modify": "把 service_port 从 9000 改为 9100，查看差异并验证。",
     "failed": "验证项目；失败时说明失败依据，不能宣称修复成功。",
     "boundary": "检查忽略文件、越界和特殊文件是否阻止自动读取。",
+    "skills": "使用 review 技能及其参考文件检查项目。",
     "cancel": "查找 entrypoint，然后等待继续分析以测试取消。",
 }
 SOURCE = "src/nested/service.sh"
@@ -67,7 +68,7 @@ class TaskModel(MockModel):
             scenario = "diagnose" if request.startswith("Diagnose the last user-issued shell command") else next(key for key, text in REQUESTS.items() if text == request)
             runtime = initial["runtime_context"]
             assert runtime["project_root"] == runtime["cwd"], "fixture scope changed"
-            assert set(runtime["tools"]) == {"list_files", "read_file", "search_text", "read_file_range", "run_command", "search_memory", "read_session_history"}
+            assert set(runtime["tools"]) == {"list_files", "read_file", "search_text", "read_file_range", "run_command", "search_memory", "read_session_history", "list_skills", "read_skill"}
             results = [json.loads(m["content"]) for m in messages if m["role"] == "tool"]
             # Prior command diagnostics are synthetic tool data, never user text.
             if scenario == "diagnose":
@@ -92,6 +93,17 @@ class TaskModel(MockModel):
 
     def decide(self, scenario, results):
         step = len(results)
+        if scenario == "skills":
+            if step == 0:
+                return self.tool("skills-list", "list_skills")
+            assert results[0]["skills"] == [{"source": "project", "name": "review"}]
+            if step == 1:
+                return self.tool("skills-read", "read_skill", source="project", name="review")
+            assert "SKILL_GUIDANCE" in results[1]["content"]
+            if step == 2:
+                return self.tool("skills-reference", "read_skill", source="project", name="review", path="references/check.md")
+            assert results[2]["content"] == "SKILL_REFERENCE"
+            return self.completed("TASK_SKILLS: 已读取技能与参考文件；未执行命令。")
         if scenario.startswith("route"):
             assert step == 0
             return self.completed("TASK_ROUTE_PREFIX: 已进入Agent，未执行输入。")
@@ -193,6 +205,10 @@ def verify(binary):
             source = "# fixture\n" * 120 + 'service_port=9000\nentrypoint() { printf "%s\\n" "$service_port"; }\n'
             (root / SOURCE).write_text(source)
             (root / "baseline.sh").write_text(source)
+            skill = root / ".lingcell/skills/review"
+            (skill / "references").mkdir(parents=True)
+            (skill / "SKILL.md").write_text("---\nname: review\ndescription: Code review\n---\nSKILL_GUIDANCE references/check.md")
+            (skill / "references/check.md").write_text("SKILL_REFERENCE")
             (root / ".bashrc").write_text("PROMPT_COMMAND=':'\n")
             (root / ".gitignore").write_text("ignored/\n")
             (root / "ignored").mkdir()
@@ -217,6 +233,11 @@ def verify(binary):
                 tty.send(REQUESTS["understand"] + "\r")
                 tty.finish("TASK_UNDERSTAND:")
                 report("understand", before, 0, "nested entrypoint and cited lines")
+
+                before = len(TaskModel.requests)
+                tty.send(":ai " + REQUESTS["skills"] + "\r")
+                tty.finish("TASK_SKILLS:")
+                report("skills", before, 0, "discover skill, read SKILL.md and supporting file")
 
                 before = len(TaskModel.requests)
                 # Diagnose starts with a genuine failed command result. The

@@ -75,6 +75,8 @@ export APP_MODE=dev
 
 每次任务开始提供程序生成的 Linux 内核、CPU 架构、有效权限级别（root/non_root）、当前 Bash 目录、固定项目读取根和工具名称。该上下文不含环境变量、账户身份详情、进程列表或配置内容；实时机器状态通过获批命令查询。
 
+Agent 还可通过 `list_skills` 发现本地技能，通过 `read_skill` 按需读取 `SKILL.md` 与参考文件。默认技能目录为 `<固定项目根>/.lingcell/skills` 和 `$XDG_CONFIG_HOME/lingcell/skills`（通常是 `~/.config/lingcell/skills`）；配置 `skill_dirs` 可添加其他绝对目录。详见 [skills 使用与读取边界](docs/skills.md)。
+
 Agent 提供 `list_files`、`read_file`、`search_text`、`read_file_range`、`run_command`，以及 `read_session_history` 和 `search_memory` 数据工具。文件工具自动执行；`run_command` 展示完整命令、实际工作目录及目的，输入 `y` 或 `yes` 后才执行。默认拒绝，拒绝后立即结束任务。每轮最多执行一条获批命令，然后将合并 PTY 输出、退出码、目录及截断标记作为工具结果返回模型。
 
 自动读取范围固定为启动目录所属的最近 Git 项目根；无 Git 时固定为启动目录。`cd` 不扩大范围。文件工具仅接受项目相对路径，拒绝 `..`、范围外符号链接、被排除的符号链接目标和特殊文件，遵循各层 `.gitignore`。打开文件时使用内核范围约束并禁止路径在检查后被替换为符号链接。
@@ -118,6 +120,7 @@ Go 在顶层编辑输入；命令通过独立管道按 NUL 边界提交，再由
 | `internal/agent` | 单轮决策、工具校验、逐条确认及结果反馈 |
 | `internal/runtime` | 会话记录、恢复、上下文预算/摘要及有来源长期记忆 |
 | `internal/project` | 固定项目范围、排除规则、忽略规则和读取预算 |
+| `internal/skills` | 本地技能目录、按需文档/参考文件读取、共享返回预算 |
 | `internal/app` | Readline、基本补全、指令及交互流程 |
 | `internal/config` | JSON 配置、默认值及校验 |
 
