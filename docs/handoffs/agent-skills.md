@@ -5,7 +5,7 @@
 - 项目根：`/home/liang_guang_can/LingCell`。
 - 开发 worktree / 分支：`/home/liang_guang_can/LingCell/.worktrees/agent-skills` / `feat/agent-skills`。
 - 基线：main，`ef5acba95a5a728e82b62437d6251a652c93899d`。
-- 候选完整 SHA / detached 测试目录：提交后由协调消息提供，验收报告回填。
+- 最终受验候选：`73c403606aeba6b73cb750e994d63c935e2de5c4`；detached测试目录：`/home/liang_guang_can/LingCell/.worktrees/verify-agent-skills-r3`（验收完成后清理）。
 - 改动范围：internal/skills（技能库/文档/预算）、internal/project（精确范围和元数据检查）、internal/agent（工具/提示/校验）、internal/app（按任务生命周期接入）、internal/config（skill_dirs）、相关测试、scripts/verify_tasks.py、scripts/verify_terminal.py（辅助函数参数名与XDG隔离）、README/AGENT/docs/skills.md。
 - 验收条件：
   1. list_skills 能发现默认 project/user 和显式 extra-N 库；同名按来源区分；仅含普通 SKILL.md 的一级目录返回，不自动上传正文，缺失库允许。
@@ -205,3 +205,77 @@ PY
 
 
 第三轮修复：List入口及所有技能结果返回计费前检查取消，新增空技能库取消回归。开发skills/agent局部测试通过；新候选重新独立验收。
+
+
+# Agent skills 第三轮独立验收报告
+
+- 状态：**PASS**。两轮共四项缺陷均独立复测通过，本次已执行检查未发现缺陷或未解决的验收阻塞。
+- 测试 Agent：`/root/skills_r3_acceptance`，全新上下文、最小交接；自行读取 AGENTS.md / AGENT.md、README、Makefile、开发日志、交接报告、源码差异及此前独立探针。
+- 基线完整 SHA：`ef5acba95a5a728e82b62437d6251a652c93899d`。
+- 候选完整 SHA：`73c403606aeba6b73cb750e994d63c935e2de5c4`。
+- 实际 HEAD（开始/结束）：均为 `73c403606aeba6b73cb750e994d63c935e2de5c4`。
+- 所有仓库命令工作目录：`/home/liang_guang_can/LingCell/.worktrees/verify-agent-skills-r3`，detached worktree。
+- 工作树状态：开始/结束 `## HEAD (no branch)`、无源码修改；结束 `git diff --exit-code` / `git diff --check` 退出0，仅忽略生成物 `bin/`、`scripts/__pycache__/`。未修改候选产品、仓库测试、规范或依赖；未提交、合并、修改共享 refs/config。报告与 overlay 均位于临时目录。
+- 环境：Linux `6.6.87.2-microsoft-standard-WSL2` x86_64；Go `go1.27.2 linux/amd64`，`/home/liang_guang_can/.local/share/go/current/bin/go`；Staticcheck `2026.2.1 (0.8.1)`，`/home/liang_guang_can/.local/share/go-dev/tools/bin/staticcheck`；Python `3.13.5`。`go list ./...` 实际列出命令包和9个内部包。
+- 原始日志、overlay、命令退出码及报告：`/tmp/lingcell-skills-r3-probes-bbkyskh5`。此前九项探针经逐项审查后复制到新临时目录，overlay 使用当前 worktree 的虚拟测试路径，本轮重新运行所有九项，未沿用旧结果。
+
+| 验收条件/检查 | 命令或步骤 | 退出码/观察结果 | 判定 |
+| --- | --- | --- | --- |
+| 相关Go回归 | `go test -count=1 -v ./internal/skills ./internal/agent ./internal/config ./internal/project` | 0；四包通过，含新增无库取消回归；`related.log` | PASS |
+| 格式/模块/vet/race | `make check` | 0；格式检查、tidy -diff、vet和9个内部包race通过，命令包无测试；`check.log` | PASS |
+| Staticcheck | `make lint` | 0；实际执行 `staticcheck ./...`，无诊断；`lint.log` | PASS |
+| 构建 | `make build` | 0；构建CLI；`build.log` | PASS |
+| 九项独立探针 | 下方完整 overlay 命令 | 0；全部9个顶层探针通过；`overlay.log` | PASS |
+| 默认/额外来源、一级发现与精确范围 | `TestAcceptanceCatalogAndExactScope` | project/user/extra-1同名分开，发现不上传正文；非法名/嵌套/缺SKILL/目录型SKILL排除，外部库不因Git祖先扩大 | PASS |
+| 目录枚举/返回限制 | `TestAcceptanceCatalogLimits` | 257技能返回256，完整JSON10525字节；4100普通条目返回0，JSON30字节；均truncated=true | PASS |
+| 项目各层忽略 | `TestAcceptanceAncestorIgnoreRules` | 根/.lingcell/库/技能四层忽略规则均阻止reference，正文仍可读 | PASS |
+| 根及内部链接/不可用库 | `TestAcceptanceSymlinkAndUnavailableRoots` | 根链接/祖先链接/普通文件根产生3个issues；缺失库允许，内部文件链接拒绝 | PASS |
+| 完整JSON及共享预算 | `TestAcceptanceJSONBudgetBothDirections` | 转义正文完整JSON32764字节、内容5447字节、truncated=true；累计预算精确用尽后技能目录与项目读取均报预算错误 | PASS |
+| cd保持固定根 | `TestAcceptanceFixedProjectAfterCwdChange` | 改到另一个合成项目后仍读取启动固定项目正文 | PASS |
+| 配置目录上限/类型 | `TestAcceptanceSkillDirectoryConfigCap`及config回归 | 16目录接受、17拒绝；相对路径/null元素/NUL路径拒绝 | PASS |
+| 首轮path:null缺陷 | `TestAcceptanceExplicitNullSkillPath`及`TestSkillArgumentValidation` | 显式null拒绝；省略/空字符串/参考路径仍合法 | PASS |
+| 第二轮无库取消缺陷 | `TestAcceptanceEmptyLibraryCancellation`及仓库`TestEmptyLibraryCancellation` | 已取消context返回context.Canceled；源码入口及计费前检查已核对 | PASS |
+| 安全边界/工具角色/确认 | `TestBoundaries`、`TestSkillGuidanceCannotAuthorizeCommands`、`TestSkillArgumentValidation`与源码审查 | 绝对/遍历/敏感/私钥/NUL/忽略/链接/FIFO拒绝；Skills未配置不广告且拒绝调用；恶意技能正文以role=tool返回，确认拒绝后零命令执行 | PASS |
+| 首轮name冲突/真实CLI技能闭环 | 合成宿主XDG下`make terminal`，包装见下 | 0；skills场景4决策、0确认，完成发现→SKILL.md→references/check.md，正文及参考内容断言通过 | PASS |
+| 首轮宿主XDG污染 | 同一包装写入synthetic-user技能再运行terminal | 0；only-project目录断言通过；合成宿主文件内容不变，未访问真实个人技能 | PASS |
+| 完整PTY/通用任务/runtime | 同一`make terminal` | 0；三CLI会话、vim/top、本地ssh -V；路由/理解/诊断/机器拒绝/实际修改差异验证/失败/边界/取消；runtime连续轮次、恢复、锁/根、隔离记忆、不重放、ephemeral/no-history/存储故障保留shell通过；`terminal.log` | PASS |
+| 文档/空白 | `git diff --check ef5acba95a5a728e82b62437d6251a652c93899d 73c403606aeba6b73cb750e994d63c935e2de5c4`及Python本地Markdown链接检查 | 0；5份改动Markdown的36个本地链接存在；文档读取范围/预算/权限/前缀检查边界与实现一致 | PASS |
+| 最终版本/状态 | `git rev-parse HEAD`、`git status --short --branch`、`git status --short --ignored`、`git diff --exit-code`、`git diff --check` | 0；HEAD相同且源码干净，仅上述忽略生成物 | PASS |
+
+九项独立探针确切命令（退出0）：
+
+```bash
+go test -count=1 -race -v -overlay=/tmp/lingcell-skills-r3-probes-bbkyskh5/overlay.json ./internal/skills ./internal/config ./internal/agent -run TestAcceptance
+```
+
+完整terminal确切包装（退出0；日志至临时目录；原实际调用还将退出码写入results.json）：
+
+```python
+import os, subprocess, tempfile
+from pathlib import Path
+with tempfile.TemporaryDirectory(prefix='lingcell-r3-host-xdg-') as task_xdg:
+    skill = Path(task_xdg)/'lingcell/skills/synthetic-user/SKILL.md'
+    skill.parent.mkdir(parents=True)
+    skill.write_text('SYNTHETIC_ONLY_HOST_GUIDANCE')
+    with open('/tmp/lingcell-skills-r3-probes-bbkyskh5/terminal.log', 'w') as log:
+        code = subprocess.call(['make', 'terminal'], env=dict(os.environ, XDG_CONFIG_HOME=task_xdg), stdout=log, stderr=subprocess.STDOUT)
+    assert skill.read_text() == 'SYNTHETIC_ONLY_HOST_GUIDANCE'
+    raise SystemExit(code)
+```
+
+## 缺陷与复现
+
+本次已执行检查未发现缺陷。此前四项缺陷均用原复现条件重新执行：辅助函数name冲突由真实CLI正文与引用分支完成证明修复；path:null由独立参数探针拒绝；宿主XDG污染由合成宿主技能、only-project断言及完整terminal通过证明隔离；空库取消由原独立探针得到context.Canceled证明修复。PASS只适用于上述候选SHA及已执行覆盖范围。
+
+## 未运行项与限制
+
+- Go1.26工具链暂不可用，未下载、未运行；Go1.27.2通过不替代最低版本验证。这是交接明确的可选检查，不列为本轮验收阻塞。
+- 未调用真实供应商模型或远程SSH，未读取真实凭据、个人skills或个人bashrc；脚本明确SKIP无授权远程SSH/个人bashrc。本地ssh -V不代表远程SSH联调。真实模型技能选择效果尚未验证。
+- 未进行持续恶意文件系统竞争压力测试；内容检查只覆盖文档规定的读取前缀，不保证未读后缀安全。
+
+## 返回开发者的动作
+
+可以记录本轮独立PASS证据；协调者仍须核对main基线、候选SHA及AGENT.md合入门槛。验收后只能追加证据文档；修改产品、测试、规范、依赖、脚本等须重新独立验收。本报告不授予合并权限。
+
+
+协调记录：最终候选与独立PASS身份已核对，main仍等于基线且干净。验收后只追加本交接/开发日志证据；当前远程已连接，未推送、未建PR、未合入main，功能保存在已提交的feat/agent-skills任务分支。
