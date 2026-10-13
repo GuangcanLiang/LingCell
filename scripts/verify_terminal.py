@@ -87,8 +87,8 @@ class MockModel(http.server.BaseHTTPRequestHandler):
             pass
 
     @staticmethod
-    def tool(id_, name, **arguments):
-        return {"role": "assistant", "tool_calls": [{"id": id_, "type": "function", "function": {"name": name, "arguments": json.dumps(arguments)}}]}
+    def tool(id_, tool_name, **arguments):
+        return {"role": "assistant", "tool_calls": [{"id": id_, "type": "function", "function": {"name": tool_name, "arguments": json.dumps(arguments)}}]}
 
 
 class Terminal:
@@ -98,7 +98,7 @@ class Terminal:
         fcntl.ioctl(self.slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
         self.original = termios.tcgetattr(self.slave)
         self.data = b""
-        env = dict(os.environ, HOME=str(root), XDG_CACHE_HOME=str(root / ".cache"), XDG_STATE_HOME=str(root / ".state"), TERM="xterm-256color", PATH="/usr/bin:/bin")
+        env = dict(os.environ, HOME=str(root), XDG_CONFIG_HOME=str(root / ".config"), XDG_CACHE_HOME=str(root / ".cache"), XDG_STATE_HOME=str(root / ".state"), TERM="xterm-256color", PATH="/usr/bin:/bin")
 
         def setup():
             os.setsid()

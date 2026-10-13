@@ -8,6 +8,8 @@
 
 基线 main 为 `ef5acba95a5a728e82b62437d6251a652c93899d`，开发分支 `feat/agent-skills`；候选由 Git 历史与 [独立验收交接](handoffs/agent-skills.md) 索引。开发阶段相关 Go 包局部测试通过，构建通过；正式独立验收尚待执行。未调用真实供应商、SSH或个人配置，未验证真实模型的技能选择效果。远程已连接，任务分支不自动推送或合入 main。
 
+首轮候选 `07c9f364a747a273e81f6985f3d481f5a10989e9` 独立 **FAIL**：真实CLI技能模拟辅助函数参数name冲突、read_skill接受path:null、Terminal继承宿主XDG技能目录。其余完整Go检查/Staticcheck/构建/runtime以及7项独立探针通过；确切证据保存到交接。开发修复三项并补参数回归，局部Go、构建与任务PTY自查通过；新候选重新独立验收，首轮不合入。
+
 ## 2026-10-12: Agent runtime 独立验收缺陷修复
 
 首轮候选 `a95ba7a381e1e90f020addd15625f721b06ecb2a` 被独立 overlay 探针确认五项失败：参数 JSON 格式差异未失效事实、来源引用授权和工具指令省略绕过、JSON 转义的已知凭据遗漏、当前大工具结果无法本轮回读。测试 Agent 因额度中断未形成完整报告，首轮未通过、未合入；已收到的独立证据与复现见 [runtime 交接](handoffs/agent-runtime.md)。

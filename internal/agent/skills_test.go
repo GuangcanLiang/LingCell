@@ -56,11 +56,16 @@ func TestSkillGuidanceCannotAuthorizeCommands(t *testing.T) {
 func TestSkillArgumentValidation(t *testing.T) {
 	for _, item := range []struct{ name, args string }{
 		{"list_skills", `null`}, {"list_skills", `{"path":"."}`}, {"list_skills", `[]`},
-		{"read_skill", `{}`}, {"read_skill", `{"source":"project","name":"../secret"}`},
+		{"read_skill", `{}`}, {"read_skill", `{"source":"project","name":"review","path":null}`}, {"read_skill", `{"source":"project","name":"review","path":12}`}, {"read_skill", `{"source":"project","name":"../secret"}`},
 		{"read_skill", `{"source":"project","name":"review","approved":true}`},
 	} {
 		if err := validate(call("test", item.name, item.args).ToolCalls[0]); err == nil {
 			t.Errorf("accepted %s %s", item.name, item.args)
+		}
+	}
+	for _, args := range []string{`{"source":"project","name":"review"}`, `{"source":"project","name":"review","path":""}`, `{"source":"project","name":"review","path":"references/check.md"}`} {
+		if err := validate(call("valid", "read_skill", args).ToolCalls[0]); err != nil {
+			t.Fatalf("valid args: %s %v", args, err)
 		}
 	}
 	m := &mockModel{replies: []model.Message{call("skill", "list_skills", `{}`)}}

@@ -102,9 +102,24 @@ func Tools() []model.Tool {
 }
 
 type skillArguments struct {
-	Source *string `json:"source"`
-	Name   *string `json:"name"`
-	Path   *string `json:"path"`
+	Source *string         `json:"source"`
+	Name   *string         `json:"name"`
+	Path   json.RawMessage `json:"path"`
+}
+
+// path distinguishes an omitted string from an explicit invalid null value.
+func (args skillArguments) path() (string, error) {
+	if len(args.Path) == 0 {
+		return "", nil
+	}
+	var value *string
+	if err := json.Unmarshal(args.Path, &value); err != nil || value == nil {
+		return "", errors.New("skill path must be a string")
+	}
+	if strings.ContainsRune(*value, 0) {
+		return "", errors.New("invalid skill path")
+	}
+	return *value, nil
 }
 
 // SkillTools advertises local read-only skill discovery and document loading.
@@ -189,8 +204,8 @@ func validate(call model.ToolCall) error {
 		if args.Source == nil || *args.Source == "" || len(*args.Source) > 64 || args.Name == nil || !skills.ValidName(*args.Name) {
 			return errors.New("read_skill requires source and a valid name")
 		}
-		if args.Path != nil && strings.ContainsRune(*args.Path, 0) {
-			return errors.New("invalid skill path")
+		if _, err := args.path(); err != nil {
+			return err
 		}
 	case "list_files", "read_file":
 		var args struct {
@@ -452,9 +467,9 @@ func (a *Agent) execute(ctx context.Context, call model.ToolCall) (any, error) {
 		if err := decode(call.Function.Arguments, &args); err != nil {
 			return nil, err
 		}
-		path := ""
-		if args.Path != nil {
-			path = *args.Path
+		path, err := args.path()
+		if err != nil {
+			return nil, err
 		}
 		return a.Skills.Read(ctx, *args.Source, *args.Name, path)
 	case "list_files", "read_file":
