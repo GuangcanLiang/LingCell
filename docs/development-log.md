@@ -14,6 +14,9 @@
 
 最终候选 `73c403606aeba6b73cb750e994d63c935e2de5c4` 由全新上下文 `/root/skills_r3_acceptance` 在独立detached worktree验收 **PASS**：相关Go、make check/lint/build/terminal、9项独立探针均退出0，四项历史缺陷重新复测通过。开始/结束HEAD相同、源码干净；确切环境/命令/限制保存到交接报告。最低Go1.26、真实模型技能选择、远程SSH、个人配置未运行。验收后只追加证据文档并检查本地链接/空白；main仍为干净基线，未推送/建立PR/合入，成果保留在任务分支。
 
+用户随后明确授权按规范合入main。已推送任务分支并创建 [PR #2](https://github.com/GuangcanLiang/LingCell/pull/2)；合入前本地/远程main均仍为基线，独立PASS候选之后仅有交接/日志证据更新，工作树干净、无WIP。GitHub PR可合并，仓库未设required状态且无CI/check runs；Copilot因额度未完成审查，不作为通过依据，独立源码审查与验收依据仍为第三轮PASS报告。本次通过PR的merge commit保留任务历史，合入后核对远程/本地main和任务树一致并正常清理任务worktree/分支。只补充合入证据，检查本地链接与git diff --check，未重复应用验收。
+
+
 ## 2026-10-12: Agent runtime 独立验收缺陷修复
 
 首轮候选 `a95ba7a381e1e90f020addd15625f721b06ecb2a` 被独立 overlay 探针确认五项失败：参数 JSON 格式差异未失效事实、来源引用授权和工具指令省略绕过、JSON 转义的已知凭据遗漏、当前大工具结果无法本轮回读。测试 Agent 因额度中断未形成完整报告，首轮未通过、未合入；已收到的独立证据与复现见 [runtime 交接](handoffs/agent-runtime.md)。

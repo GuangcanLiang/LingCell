@@ -279,3 +279,12 @@ with tempfile.TemporaryDirectory(prefix='lingcell-r3-host-xdg-') as task_xdg:
 
 
 协调记录：最终候选与独立PASS身份已核对，main仍等于基线且干净。验收后只追加本交接/开发日志证据；当前远程已连接，未推送、未建PR、未合入main，功能保存在已提交的feat/agent-skills任务分支。
+
+
+## 2026-10-13：用户授权与PR合入门禁
+
+用户明确要求“合入main吧，要符合规范”，授权本次按仓库PR流程发布与合入。已推送任务分支、创建 [PR #2](https://github.com/GuangcanLiang/LingCell/pull/2)。检查时PR头为 `2cff6754135de44e85236ff6d68e71bf642faa2c`，本地/远程main和PR基线均为 `ef5acba95a5a728e82b62437d6251a652c93899d`；代码与独立受验候选 `73c403606aeba6b73cb750e994d63c935e2de5c4` 一致，后续仅证据文档，工作树干净且无未完成WIP。
+
+GitHub状态检查：PR为MERGEABLE/CLEAN，main未设置required状态，status/check runs均为0；combined status显示pending但没有具体状态项，不将其描述为CI通过。Copilot评论说明因额度无法完成审查，不作为独立审查依据。第三轮独立Agent已审查差异并完成所有要求的Go/PTY/九项探针，报告PASS，无未解决验收阻塞。
+
+本次以PR merge commit整合、保留各次实现和修复提交；执行时再次核对精确PR头及main基线，不绕过保护或使用admin/force选项。合入后核对本地/远程main、任务分支树内容和图形历史，并在确认无未保存内容后正常清理任务工作树与已合入分支。本次只补充证据文档，无产品或规范变动，无需重复原应用验收。
